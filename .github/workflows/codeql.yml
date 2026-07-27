@@ -8,11 +8,19 @@ on:
   schedule:
     - cron: '31 7 * * 6'
 
+# Its own group, not the pipeline's: sharing one would make CodeQL and the
+# pipeline cancel each other on every push.
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    # Upstream's 360 is GitHub's own default ceiling; this codebase analyses in
+    # minutes, so fail fast rather than hold a runner for six hours.
+    timeout-minutes: 60
     permissions:
       actions: read
       contents: read

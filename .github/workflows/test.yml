@@ -1,29 +1,38 @@
+# Reusable — called by pipeline.yml, which owns the triggers and the
+# `Pipeline Complete` gate. Deliberately no `paths-ignore` here: a workflow whose
+# jobs feed a required status check must never be filtered out of a run, or the
+# context is reported as pending forever instead of skipped, and the PR can never
+# merge.
 name: 'build-test'
-on: # rebuild any PRs and main branch changes
-  pull_request:
-    paths-ignore:
-      - 'CHANGELOG.md'
-      - 'README.md'
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - 'CHANGELOG.md'
-      - 'README.md'
+on:
+  workflow_call:
 
 jobs:
-  build-test: # make sure build/ci work properly
+  build-test: # lint, typecheck, unit tests, and bundle integrity
+    name: Build and Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 24.x
+          node-version-file: 'package.json'
           cache: yarn
-      - run: yarn install
-      - run: yarn build
+      # --frozen-lockfile: a bare `yarn install` may resolve differently and
+      # rewrite the tracked yarn.lock, which the integrity check below would then
+      # report as drift.
+      - run: yarn install --frozen-lockfile
+      - run: yarn lint
+      - run: yarn typecheck
       - run: yarn test
+      # Build last, immediately before the integrity check, so the check covers
+      # side effects of everything above it as well as a stale bundle. Upstream
+      # rebuilt dist/ after the fact with a bot pushing to main; we require it in
+      # the PR instead. See FORK.md.
+      - run: yarn build
+      - name: Check that none of these steps caused unstaged changes
+        uses: semdatex/actions-check-git-unstaged@v1.0.0
   test-output: # make sure the action works on a clean machine without building
+    name: Action Output Round-trip
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -38,9 +47,9 @@ jobs:
           PULUMI_CONFIG_PASSPHRASE: not-a-secret
       - uses: actions/setup-node@v6
         with:
-          node-version: 24.x
+          node-version-file: 'package.json'
           cache: yarn
-      - run: yarn install
+      - run: yarn install --frozen-lockfile
       - run: yarn build
       - name: Run Pulumi Up
         uses: ./
@@ -81,6 +90,7 @@ jobs:
           OUTPUT1: ${{ steps.pulumi.outputs.name }}
           OUTPUT2: ${{ steps.pulumioutput.outputs.name }}
   test-update-plan: # make sure the action works on a clean machine without building
+    name: Action Update Plan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -95,9 +105,9 @@ jobs:
           PULUMI_CONFIG_PASSPHRASE: not-a-secret
       - uses: actions/setup-node@v6
         with:
-          node-version: 24.x
+          node-version-file: 'package.json'
           cache: yarn
-      - run: yarn install
+      - run: yarn install --frozen-lockfile
       - run: yarn build
       - name: Generate Update Plan via Pulumi Preview
         uses: ./
