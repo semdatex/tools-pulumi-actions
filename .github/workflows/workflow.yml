@@ -5,6 +5,15 @@ name: 'Actions Workflow'
 on:
   workflow_call:
 
+# The test stacks pull the `random` provider without pinning a plugin version, so
+# the CLI asks the GitHub releases API which version is latest. Unauthenticated
+# that shares the runner's IP quota and 403s with "rate limit exceeded" — first on
+# macOS, whose egress is busiest. Pulumi reads GITHUB_TOKEN for those requests
+# (sdk/go/common/workspace/plugins.go) and its own error message asks for it. The
+# default token suffices; pipeline.yml scopes it to `contents: read`.
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+
 jobs:
   install-and-build:
     name: Install and Build GHA

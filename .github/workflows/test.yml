@@ -7,6 +7,11 @@ name: 'build-test'
 on:
   workflow_call:
 
+# See the note in workflow.yml: test-output and test-update-plan drive the same
+# golang test stack, so they need authenticated provider-plugin resolution too.
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+
 jobs:
   build-test: # lint, typecheck, unit tests, and bundle integrity
     name: Build and Test
