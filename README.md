@@ -1,5 +1,11 @@
 # Pulumi GitHub Actions
 
+> **This is a Semdatex fork of
+> [`pulumi/actions`](https://github.com/pulumi/actions).** See
+> [FORK.md](./FORK.md) for what we changed, how to sync from upstream, how to
+> consume it, and why `dist/` must be committed with every source change. The
+> rest of this README is upstream's.
+
 Pulumi's GitHub Actions deploy apps and infrastructure to your cloud of choice,
 using just your favorite language and GitHub. This includes previewing,
 validating, and collaborating on proposed deployments in the context of Pull

@@ -1,13 +1,18 @@
+# Reusable — called by pipeline.yml, which owns the triggers and the
+# `Pipeline Complete` gate. See the note in test.yml on why there is no
+# `paths-ignore` here.
 name: 'Actions Workflow'
 on:
-  workflow_dispatch: {}
-  pull_request:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - 'CHANGELOG.md'
-      - 'README.md'
+  workflow_call:
+
+# The test stacks pull the `random` provider without pinning a plugin version, so
+# the CLI asks the GitHub releases API which version is latest. Unauthenticated
+# that shares the runner's IP quota and 403s with "rate limit exceeded" — first on
+# macOS, whose egress is busiest. Pulumi reads GITHUB_TOKEN for those requests
+# (sdk/go/common/workspace/plugins.go) and its own error message asks for it. The
+# default token suffices; pipeline.yml scopes it to `contents: read`.
+env:
+  GITHUB_TOKEN: ${{ github.token }}
 
 jobs:
   install-and-build:
@@ -18,22 +23,60 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 24.x
+          node-version-file: 'package.json'
           cache: yarn
 
-      - run: yarn install
+      - run: yarn install --frozen-lockfile
 
       - run: yarn build
 
-      - uses: dorny/paths-filter@v4
+      # Upstream ran dorny/paths-filter here with `base: HEAD` — its
+      # "uncommitted changes" mode — so `changed` actually meant "the committed
+      # dist/ is stale", and the whole e2e matrix below was gated on that. Once
+      # test.yml enforces a fresh dist on every PR that becomes permanently
+      # false and the matrix would silently never run again. Ask the real
+      # question instead: did this PR touch anything that changes how the built
+      # action behaves? Doing it in shell also means the fork needs no
+      # third-party action, so it is not coupled to the org's Actions allowlist.
+      - name: Detect relevant changes
         id: changes
-        with:
-          base: HEAD
-          filters: |
-            dist:
-              - 'dist/**'
-              - .github/workflows/**
-              - .github/test-stacks/**
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          RELEVANT='^(src|dist|scripts)/|^\.github/(workflows|test-stacks)/|^(action\.yml|package\.json|yarn\.lock|tsconfig\.json)$'
+
+          # Fail open. Where we cannot establish a range — workflow_dispatch,
+          # merge_group, a force-push, an API hiccup — run the full matrix rather
+          # than skip it and report a false green.
+          emit() { echo "dist=$1" >>"$GITHUB_OUTPUT"; }
+
+          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+            echo "No pull-request range available; running the full matrix."
+            emit true
+            exit 0
+          fi
+
+          # The compare API avoids fetching history: this fork carries
+          # pulumi/actions' full log, with a multi-megabyte dist blob on every
+          # bot commit, so fetch-depth: 0 is expensive.
+          if ! files=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}" \
+              --paginate --jq '.files[].filename'); then
+            echo "::warning::Could not compare ${BASE_SHA}...${HEAD_SHA}; running the full matrix."
+            emit true
+            exit 0
+          fi
+
+          echo "Changed files:"
+          echo "$files" | sed 's/^/  /'
+
+          if printf '%s\n' "$files" | grep -Eq "$RELEVANT"; then
+            emit true
+          else
+            echo "Nothing that affects the built action changed."
+            emit false
+          fi
 
       - name: Upload artifacts
         if:

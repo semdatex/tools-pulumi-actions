@@ -1,0 +1,92 @@
+# Single entry point for CI. Mirrors semdatex/infrastructure-root's pipeline.yml:
+# the suites are reusable workflows, and one aggregate job — `Pipeline Complete` —
+# is the only required status check on main (declared in infrastructure-root at
+# projects/tools/pulumi-actions.yml).
+#
+# It has to be an aggregate rather than requiring the individual jobs, because
+# most of the e2e matrix is conditional (see workflow.yml) and a job that skips
+# never reports its context. Deliberately no `paths`/`paths-ignore` filter:
+# filtering the run out would leave the required context pending forever instead
+# of skipped, and the PR could never merge.
+name: tools-pulumi-actions
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/test.yml
+
+  e2e:
+    uses: ./.github/workflows/workflow.yml
+
+  pipeline-complete:
+    name: Pipeline Complete
+    if: always()
+    needs:
+      - validate
+      - e2e
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check pipeline jobs via needs context
+        env:
+          NEEDS_JSON: '${{ toJSON(needs) }}'
+        run: |
+          echo "=== Job Results ==="
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
+          echo ""
+
+          FAILED=$(echo "$NEEDS_JSON" | jq -r '
+            to_entries[]
+            | select(.value.result == "failure" or .value.result == "cancelled")
+            | "\(.key): \(.value.result)"
+          ')
+
+          if [ -n "$FAILED" ]; then
+            echo "::error::Pipeline failed. The following jobs did not succeed:"
+            echo "$FAILED" | while IFS= read -r line; do
+              echo "::error::  - $line"
+            done
+            exit 1
+          fi
+
+          echo "All jobs in needs context passed or were intentionally skipped."
+
+      # The needs context reports per-called-workflow, so a single cancelled leg
+      # of the ~65-job e2e matrix can hide behind an overall success. With
+      # cancel-in-progress enabled that is a live scenario, so re-check the real
+      # job conclusions.
+      - name: Check for cancelled jobs via API
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: |
+          echo "=== Verifying job conclusions via API ==="
+
+          JOBS=$(gh api \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs" \
+            --paginate --jq '.jobs[] | {name: .name, conclusion: .conclusion, status: .status}')
+
+          PROBLEMS=$(echo "$JOBS" | jq -s '[.[] | select(.name != "Pipeline Complete") | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out")]')
+          PROBLEM_COUNT=$(echo "$PROBLEMS" | jq 'length')
+
+          if [ "$PROBLEM_COUNT" -gt 0 ]; then
+            echo "::error::Found failed or cancelled jobs via API (may indicate concurrency cancellation):"
+            echo "$PROBLEMS" | jq -r '.[] | "::error::  - \(.name): \(.conclusion)"'
+            exit 1
+          fi
+
+          echo "Pipeline complete. All jobs succeeded or were intentionally skipped."
