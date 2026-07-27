@@ -31,6 +31,10 @@ not record our changes. Put fork-relevant notes here instead.
 - **Pinned the toolchain** — `volta.node` in `package.json`, read by
   `actions/setup-node` via `node-version-file`, and
   `yarn install --frozen-lockfile` everywhere, so `dist/` builds reproducibly.
+- **Extracted stack-output publishing into `src/libs/outputs.ts`** with unit
+  tests that pin the current `setOutput`/`setSecret` behavior, including call
+  order. No behavior change — groundwork for the output/secret features, which
+  all land in that module instead of `main.ts`.
 
 ## `dist/` must be committed with your change
 
