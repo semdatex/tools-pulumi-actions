@@ -1,5 +1,12 @@
 # Contributing
 
+> **Fork note.** This repository is a Semdatex fork of
+> [`pulumi/actions`](https://github.com/pulumi/actions). Read
+> [FORK.md](./FORK.md) first — it covers the `dist/` obligation, how to sync from
+> upstream, and how the fork is consumed. Changes that belong upstream should be
+> sent upstream; use this fork only for patches we need sooner than upstream can
+> ship them.
+
 We :heart: PRs! If you have something you'd like to contribute, please open an
 issue first. We're happy to talk with you about your pull request before you get
 started.
@@ -8,7 +15,11 @@ For larger features, we'd appreciate it if you open a [new issue](https://github
 Please also be sure to browse [current issues](https://github.com/pulumi/actions/issues) to make sure your issue is unique, to lighten the triage burden on our maintainers.
 Finally, please limit your pull requests to contain only one feature at a time. Separating feature work into individual pull requests helps speed up code review and reduces the barrier to merge.
 
-## Release Process
+## Release Process (upstream only)
+
+> Not applicable to this fork — we removed the Marketplace release automation and
+> consume the fork by pinned commit SHA instead. See
+> [FORK.md](./FORK.md#consuming-the-fork). Kept below for reference when syncing.
 
 This section details the steps necessary to cut a new release. Suppose the
 latest release is `v3.18.1`, and you wish to cut `v3.19.0`.

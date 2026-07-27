@@ -1,39 +1,37 @@
+# Diverges from upstream on purpose. Upstream runs both ecosystems daily and
+# labels every PR; here the labels do not exist (Dependabot errors on every run
+# if they are kept), and every dependency bump additionally needs a human to
+# `yarn build` and commit dist/ or the pipeline's dist integrity check fails.
+# Weekly plus a queue depth of one keeps that manual step tractable.
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: 'github-actions'
+    directory: '/'
     groups:
       github-actions:
         patterns:
-          - "*"
+          - '*'
         update-types:
-          - "major"
-          - "minor"
-          - "patch"
+          - 'major'
+          - 'minor'
+          - 'patch'
     schedule:
-      interval: "daily"
-    labels:
-      - "impact/no-changelog-required"
-      - "github_actions"
-      - "dependencies"
-  - package-ecosystem: "npm"
-    directory: "/"
+      interval: 'weekly'
+    open-pull-requests-limit: 1
+  - package-ecosystem: 'npm'
+    directory: '/'
     groups:
       npm:
         patterns:
-          - "*"
+          - '*'
         update-types:
-          - "major"
-          - "minor"
-          - "patch"
+          - 'major'
+          - 'minor'
+          - 'patch'
     schedule:
-      interval: "daily"
+      interval: 'weekly'
+    open-pull-requests-limit: 1
     ignore:
-      - dependency-name: "typescript*"
-      - dependency-name: "@types/node"
-        versions: ["15.x"]
-    labels:
-      - "impact/no-changelog-required"
-      - "javascript"
-      - "dependencies"
-    
+      - dependency-name: 'typescript*'
+      - dependency-name: '@types/node'
+        versions: ['15.x']
