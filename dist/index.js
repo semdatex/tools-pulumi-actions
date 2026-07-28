@@ -142453,6 +142453,21 @@ const environmentVariables = envalid_dist.cleanEnv(process.env, {
     GITHUB_WORKSPACE: envalid_dist.str(),
 });
 
+;// CONCATENATED MODULE: ./src/libs/outputs.ts
+
+/**
+ * Publishes every stack output as a step output of the action, registering a
+ * log mask for the values Pulumi marks as secret.
+ */
+function publishStackOutputs(outputs) {
+    for (const [outKey, outExport] of Object.entries(outputs)) {
+        setOutput(outKey, outExport.value);
+        if (outExport.secret) {
+            core_setSecret(outExport.value);
+        }
+    }
+}
+
 ;// CONCATENATED MODULE: ./node_modules/dedent/dist/dedent.mjs
 function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); enumerableOnly && (symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; })), keys.push.apply(keys, symbols); } return keys; }
 function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = null != arguments[i] ? arguments[i] : {}; i % 2 ? ownKeys(Object(source), !0).forEach(function (key) { _defineProperty(target, key, source[key]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } return target; }
@@ -143896,6 +143911,7 @@ const login = async (workDir, cloudUrl) => {
 
 
 
+
 const main = async () => {
     const downloadConfig = makeInstallationConfig();
     if (downloadConfig.success) {
@@ -143995,12 +144011,7 @@ const runAction = async (config) => {
         // initialized, so `stack.outputs()` can be used to get the stack's outputs.
         outputs = await stack.outputs();
     }
-    for (const [outKey, outExport] of Object.entries(outputs)) {
-        setOutput(outKey, outExport.value);
-        if (outExport.secret) {
-            core_setSecret(outExport.value);
-        }
-    }
+    publishStackOutputs(outputs);
     // Only comment on the pull request if the command is not `output`.
     if (config.command !== "output") {
         const isPullRequest = github_context.payload.pull_request !== undefined;

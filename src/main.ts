@@ -17,6 +17,7 @@ import {
   makeInstallationConfig,
 } from './config';
 import { environmentVariables } from './libs/envs';
+import { publishStackOutputs } from './libs/outputs';
 import { handlePullRequestMessage } from './libs/pr';
 import * as pulumiCli from './libs/pulumi-cli';
 import { handleSummaryMessage } from './libs/summary';
@@ -143,12 +144,7 @@ const runAction = async (config: Config): Promise<void> => {
     outputs = await stack.outputs();
   }
 
-  for (const [outKey, outExport] of Object.entries(outputs)) {
-    core.setOutput(outKey, outExport.value);
-    if (outExport.secret) {
-      core.setSecret(outExport.value);
-    }
-  }
+  publishStackOutputs(outputs);
 
   // Only comment on the pull request if the command is not `output`.
   if (config.command !== "output") {
