@@ -142423,6 +142423,7 @@ function makeConfig() {
         }) ?? 'exclude',
         suppressSecretOutputs: inputs_getBooleanInput('suppress-secret-outputs'),
         eventLogFile: inputs_getInput('event-log-file'),
+        exportFile: inputs_getInput('export-file'),
         options: {
             parallel: getNumberInput('parallel', {}),
             message: inputs_getInput('message'),
@@ -143655,6 +143656,28 @@ async function downloadCli(range) {
     }
 }
 
+;// CONCATENATED MODULE: ./src/libs/export.ts
+
+
+
+/**
+ * Writes `pulumi stack export` JSON to a file with secrets kept encrypted.
+ *
+ * Deliberately NOT the Automation API's exportStack(), which hardcodes
+ * `--show-secrets` and would put plaintext secrets on disk. The raw CLI
+ * without the flag preserves the ciphertext envelopes, so the file is safe
+ * to persist (e.g. as a pre-deploy snapshot artifact) — only someone with
+ * the stack's secrets provider can decrypt it.
+ */
+async function exportStackState(workDir, stackName, path) {
+    const result = await run('--non-interactive', '--cwd', workDir, 'stack', 'export', '--stack', stackName);
+    if (!result.success) {
+        throw new Error(`Failed to export the state of stack ${stackName}: ${result.stderr}`);
+    }
+    external_fs_.mkdirSync((0,external_path_.dirname)(path), { recursive: true });
+    external_fs_.writeFileSync(path, result.stdout, { encoding: 'utf-8' });
+}
+
 ;// CONCATENATED MODULE: ./src/libs/outputs.ts
 
 
@@ -144075,6 +144098,7 @@ const login = async (workDir, cloudUrl) => {
 
 
 
+
 const main = async () => {
     const downloadConfig = makeInstallationConfig();
     if (downloadConfig.success) {
@@ -144225,6 +144249,9 @@ const runAction = async (config) => {
     }
     setOutput('stack-outputs', buildStackOutputsJson(outputs, config.stackOutputsSecrets));
     setOutput('command-result', 'succeeded');
+    if (config.exportFile) {
+        await exportStackState(workDir, config.stackName, (0,external_path_.resolve)(workDir, config.exportFile));
+    }
     // Only comment on the pull request if the command is not `output`.
     if (config.command !== "output") {
         const isPullRequest = github_context.payload.pull_request !== undefined;

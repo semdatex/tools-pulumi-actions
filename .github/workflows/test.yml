@@ -122,6 +122,12 @@ jobs:
           stack-name: dev
           work-dir: .github/test-stacks/yaml
           suppress-progress: true
+          export-file: /tmp/state.json
+      - name: Assert the exported state keeps secrets encrypted
+        run: |
+          jq -e '.deployment.resources | length > 0' /tmp/state.json >/dev/null || { echo "export has no resources"; exit 1; }
+          jq -e '[.deployment.resources[] | select(.type == "pulumi:pulumi:Stack")] | first | .outputs.secretValue | has("ciphertext")' /tmp/state.json >/dev/null || { echo "secret output is not a ciphertext envelope"; exit 1; }
+          ! grep -q 'hush-hush-1234' /tmp/state.json || { echo "exported state leaked a plaintext secret"; exit 1; }
       - name: Get Outputs (exact legacy masking)
         uses: ./
         if: always()

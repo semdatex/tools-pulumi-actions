@@ -18,6 +18,7 @@ import {
 } from './config';
 import { environmentVariables } from './libs/envs';
 import { createEventLogWriter } from './libs/events';
+import { exportStackState } from './libs/export';
 import {
   buildStackOutputsJson,
   fetchOutputsWithoutDecrypting,
@@ -206,6 +207,14 @@ const runAction = async (config: Config): Promise<void> => {
     buildStackOutputsJson(outputs, config.stackOutputsSecrets),
   );
   core.setOutput('command-result', 'succeeded');
+
+  if (config.exportFile) {
+    await exportStackState(
+      workDir,
+      config.stackName,
+      resolve(workDir, config.exportFile),
+    );
+  }
 
   // Only comment on the pull request if the command is not `output`.
   if (config.command !== "output") {

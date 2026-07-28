@@ -60,6 +60,10 @@ not record our changes. Put fork-relevant notes here instead.
   failed` output that is set even on failure (upstream sets no outputs at all
   then). Failure semantics are otherwise unchanged; combine with a
   workflow-level `continue-on-error: true` to post-process expected failures.
+- **`export-file`** — `pulumi stack export` to a file after a successful
+  command, with secrets kept encrypted. Uses the raw CLI on purpose: the
+  Automation API's `exportStack()` hardcodes `--show-secrets` and would put
+  plaintext secrets on disk (a unit test pins the argv).
 
 ## `dist/` must be committed with your change
 

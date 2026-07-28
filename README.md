@@ -178,6 +178,12 @@ The action can be configured with the following arguments:
   delete), set `continue-on-error: true` on the *step*, check the
   `command-result` output, and read the event file — it is already on disk.
 
+- `export-file` - (optional) After the command succeeds, write
+  `pulumi stack export` JSON to this file path with secrets kept encrypted
+  (only someone with the stack's secrets provider can decrypt them). For a
+  pre-deploy state snapshot, run a separate `command: output` step with
+  `export-file` before the `up` step and upload the file as an artifact.
+
 - `plan` - (optional) Used for
   [update plans](https://www.pulumi.com/docs/concepts/update-plans/)
 

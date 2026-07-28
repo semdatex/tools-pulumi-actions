@@ -132,6 +132,9 @@ inputs:
   event-log-file:
     description: 'Write the engine events of the operation to this file as JSON lines (one event per line), including when the command fails. Not supported for command: output. Relative paths resolve against work-dir.'
     required: false
+  export-file:
+    description: 'After the command succeeds, write `pulumi stack export` JSON (secrets kept encrypted) to this file path. Relative paths resolve against work-dir.'
+    required: false
   always-include-summary:
     description: 'If comments must be trimmed, trim them from the front. This ensures the resources summary is always included in the comment'
     required: false

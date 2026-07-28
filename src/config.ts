@@ -101,6 +101,7 @@ export function makeConfig() {
       }) ?? 'exclude',
     suppressSecretOutputs: getBooleanInput('suppress-secret-outputs'),
     eventLogFile: getInput('event-log-file'),
+    exportFile: getInput('export-file'),
 
     options: {
       parallel: getNumberInput('parallel', {}),

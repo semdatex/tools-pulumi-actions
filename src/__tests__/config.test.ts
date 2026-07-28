@@ -31,6 +31,7 @@ const defaultConfig: Record<string, string> = {
   'stack-outputs-secrets': 'exclude',
   'suppress-secret-outputs': 'false',
   'event-log-file': '',
+  'export-file': '',
 };
 
 function setupMockedConfig(config: Record<string, string>) {
@@ -59,6 +60,7 @@ describe('config.ts', () => {
         "configMap": undefined,
         "editCommentOnPr": false,
         "eventLogFile": "",
+        "exportFile": "",
         "githubToken": "n/a",
         "options": {
           "color": undefined,
