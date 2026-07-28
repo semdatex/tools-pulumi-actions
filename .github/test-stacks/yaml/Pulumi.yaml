@@ -1,0 +1,13 @@
+# Fork-only fixture: the upstream test stacks export no secret output, and
+# editing them would create merge-conflict surface. YAML runtime needs no
+# language toolchain and no provider plugins.
+name: yamltest
+runtime: yaml
+outputs:
+  plain: hello
+  secretValue:
+    fn::secret: hush-hush-1234
+  structuredSecret:
+    fn::secret:
+      username: fixture-user
+      password: fixture-password-9876

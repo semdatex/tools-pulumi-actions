@@ -94,6 +94,56 @@ jobs:
         env:
           OUTPUT1: ${{ steps.pulumi.outputs.name }}
           OUTPUT2: ${{ steps.pulumioutput.outputs.name }}
+  test-secret-outputs: # per-key outputs of secret values must keep upstream parity in both masking modes
+    name: Secret Outputs Round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          pulumi login --local
+          pulumi stack init dev
+        working-directory: .github/test-stacks/yaml
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: 'package.json'
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: yarn build
+      - name: Run Pulumi Up (default nested masking)
+        uses: ./
+        id: pulumi
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+        with:
+          command: up
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/yaml
+          suppress-progress: true
+      - name: Get Outputs (exact legacy masking)
+        uses: ./
+        if: always()
+        id: pulumioutput
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+        with:
+          command: output
+          cloud-url: file://~
+          stack-name: organization/yamltest/dev
+          secret-masking: exact
+      - name: Assert per-key outputs kept the upstream contract
+        run: |
+          [[ "$PLAIN" == "hello" ]] || { echo "plain output broken"; exit 1; }
+          [[ "$SECRET_UP" == "hush-hush-1234" ]] || { echo "secret output did not round-trip through up (nested masking)"; exit 1; }
+          [[ "$SECRET_OUTPUT" == "hush-hush-1234" ]] || { echo "secret output did not round-trip through output (exact masking)"; exit 1; }
+          [[ "$(echo "$STRUCTURED" | jq -r .password)" == "fixture-password-9876" ]] || { echo "structured secret output did not round-trip"; exit 1; }
+        env:
+          PLAIN: ${{ steps.pulumi.outputs.plain }}
+          SECRET_UP: ${{ steps.pulumi.outputs.secretValue }}
+          SECRET_OUTPUT: ${{ steps.pulumioutput.outputs.secretValue }}
+          STRUCTURED: ${{ steps.pulumi.outputs.structuredSecret }}
   test-update-plan: # make sure the action works on a clean machine without building
     name: Action Update Plan
     runs-on: ubuntu-latest

@@ -27,6 +27,7 @@ const defaultConfig: Record<string, string> = {
   'log-verbosity': '',
   'log-flow': 'false',
   debug: 'false',
+  'secret-masking': 'nested',
 };
 
 function setupMockedConfig(config: Record<string, string>) {
@@ -82,6 +83,7 @@ describe('config.ts', () => {
         },
         "pulumiVersion": "^3",
         "remove": false,
+        "secretMasking": "nested",
         "secretsProvider": "",
         "stackName": "dev",
         "upsert": false,
@@ -98,6 +100,17 @@ describe('config.ts', () => {
 
     expect(() => makeConfig()).toThrowErrorMatchingInlineSnapshot(
       `"Input was not correct for command. Valid alternatives are: up, update, refresh, destroy, preview, output"`,
+    );
+  });
+
+  it('should fail if secret-masking is invalid', async () => {
+    setupMockedConfig({
+      ...defaultConfig,
+      'secret-masking': 'bogus',
+    });
+
+    expect(() => makeConfig()).toThrowErrorMatchingInlineSnapshot(
+      `"Input was not correct for secret-masking. Valid alternatives are: nested, exact"`,
     );
   });
 

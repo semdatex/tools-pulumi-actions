@@ -157,6 +157,10 @@ The action can be configured with the following arguments:
 - `suppress-progress` - (optional) Suppress display of periodic progress dots to
   limit logs length.
 
+- `secret-masking` - (optional) How secret stack outputs are masked in logs.
+  `nested` (default) also masks every string and number leaf inside structured
+  secret outputs; `exact` masks only the exact serialized value.
+
 - `plan` - (optional) Used for
   [update plans](https://www.pulumi.com/docs/concepts/update-plans/)
 

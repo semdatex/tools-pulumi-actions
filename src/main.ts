@@ -145,7 +145,7 @@ const runAction = async (config: Config): Promise<void> => {
     outputs = await stack.outputs();
   }
 
-  publishStackOutputs(outputs);
+  publishStackOutputs(outputs, { secretMasking: config.secretMasking });
 
   // Only comment on the pull request if the command is not `output`.
   if (config.command !== "output") {

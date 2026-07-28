@@ -91,6 +91,10 @@ export function makeConfig() {
     configMap: getYAMLInput<ConfigMap>('config-map'),
     editCommentOnPr: getBooleanInput('edit-pr-comment'),
     alwaysIncludeSummary: getBooleanInput('always-include-summary'),
+    secretMasking:
+      getUnionInput('secret-masking', {
+        alternatives: ['nested', 'exact'] as const,
+      }) ?? 'nested',
 
     options: {
       parallel: getNumberInput('parallel', {}),
