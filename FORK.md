@@ -39,6 +39,14 @@ not record our changes. Put fork-relevant notes here instead.
   `destroy` do, instead of buffering until the command exits. Long previews are
   now diagnosable while they run; stderr is no longer printed twice. The
   `output` step output and PR-comment/summary content are unchanged.
+- **Secret outputs are masked before anything is written, leaf by leaf.**
+  Upstream registers each mask after the value has already been set and masks
+  only the exact serialization, so nested values of structured secret outputs
+  leak through `fromJSON(...)`/`toJSON(...)` re-encoding. Masks now register
+  first, and structured secrets additionally mask every string/number leaf
+  (boolean and very short leaves are skipped to avoid corrupting logs). New
+  input `secret-masking: nested` (default) | `exact` (bit-for-bit upstream
+  masking). GITHUB_OUTPUT contents are unchanged in both modes.
 
 ## `dist/` must be committed with your change
 
