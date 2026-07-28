@@ -172,6 +172,64 @@ jobs:
           SECRET_PER_KEY: ${{ steps.pulumisuppressed.outputs.secretValue }}
           PLAIN: ${{ steps.pulumisuppressed.outputs.plain }}
           AGGREGATE: ${{ steps.pulumisuppressed.outputs['stack-outputs'] }}
+  test-event-log: # the event file must exist and parse for successful AND failed commands
+    name: Engine Event Log
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          pulumi login --local
+          pulumi stack init dev
+        working-directory: .github/test-stacks/yaml
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: 'package.json'
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: yarn build
+      - name: Preview expected to fail (fresh stack + expect-no-changes)
+        uses: ./
+        id: previewfail
+        continue-on-error: true
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+        with:
+          command: preview
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/yaml
+          expect-no-changes: true
+          event-log-file: /tmp/events-fail.jsonl
+          suppress-progress: true
+      - name: Assert the failed preview still produced events and a disposition
+        run: |
+          [[ "$OUTCOME" == "failure" ]] || { echo "expected the preview step to fail, got $OUTCOME"; exit 1; }
+          [[ "$COMMAND_RESULT" == "failed" ]] || { echo "command-result not set on failure: '$COMMAND_RESULT'"; exit 1; }
+          jq -s 'length > 0' /tmp/events-fail.jsonl >/dev/null || { echo "event log missing or empty after failure"; exit 1; }
+        env:
+          OUTCOME: ${{ steps.previewfail.outcome }}
+          COMMAND_RESULT: ${{ steps.previewfail.outputs.command-result }}
+      - name: Preview expected to succeed
+        uses: ./
+        id: previewok
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+        with:
+          command: preview
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/yaml
+          event-log-file: /tmp/events-ok.jsonl
+          suppress-progress: true
+      - name: Assert the successful preview logged events incl. the summary
+        run: |
+          [[ "$COMMAND_RESULT" == "succeeded" ]] || { echo "command-result not 'succeeded': '$COMMAND_RESULT'"; exit 1; }
+          jq -s 'length > 0' /tmp/events-ok.jsonl >/dev/null || { echo "event log missing or empty"; exit 1; }
+          jq -s '[.[] | has("summaryEvent")] | any' /tmp/events-ok.jsonl | grep -q true || { echo "no summaryEvent in event log"; exit 1; }
+        env:
+          COMMAND_RESULT: ${{ steps.previewok.outputs.command-result }}
   test-update-plan: # make sure the action works on a clean machine without building
     name: Action Update Plan
     runs-on: ubuntu-latest

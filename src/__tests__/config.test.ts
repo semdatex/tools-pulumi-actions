@@ -30,6 +30,7 @@ const defaultConfig: Record<string, string> = {
   'secret-masking': 'nested',
   'stack-outputs-secrets': 'exclude',
   'suppress-secret-outputs': 'false',
+  'event-log-file': '',
 };
 
 function setupMockedConfig(config: Record<string, string>) {
@@ -57,6 +58,7 @@ describe('config.ts', () => {
         "commentOnSummary": false,
         "configMap": undefined,
         "editCommentOnPr": false,
+        "eventLogFile": "",
         "githubToken": "n/a",
         "options": {
           "color": undefined,
@@ -104,6 +106,18 @@ describe('config.ts', () => {
 
     expect(() => makeConfig()).toThrowErrorMatchingInlineSnapshot(
       `"Input was not correct for command. Valid alternatives are: up, update, refresh, destroy, preview, output"`,
+    );
+  });
+
+  it('should fail if event-log-file is combined with the output command', async () => {
+    setupMockedConfig({
+      ...defaultConfig,
+      command: 'output',
+      'event-log-file': '/tmp/events.jsonl',
+    });
+
+    expect(() => makeConfig()).toThrow(
+      /'event-log-file' input is not supported for command: output/,
     );
   });
 

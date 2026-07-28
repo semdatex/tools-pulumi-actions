@@ -142386,7 +142386,7 @@ function makeConfig() {
             throw new Error(`pulumi-version-file '${versionFile}' does not exist`);
         }
     }
-    return {
+    const config = {
         command: getUnionInput('command', {
             required: true,
             alternatives: [
@@ -142422,6 +142422,7 @@ function makeConfig() {
             alternatives: ['exclude', 'plaintext'],
         }) ?? 'exclude',
         suppressSecretOutputs: inputs_getBooleanInput('suppress-secret-outputs'),
+        eventLogFile: inputs_getInput('event-log-file'),
         options: {
             parallel: getNumberInput('parallel', {}),
             message: inputs_getInput('message'),
@@ -142450,6 +142451,10 @@ function makeConfig() {
             debug: inputs_getBooleanInput('debug'),
         },
     };
+    if (config.eventLogFile && config.command === 'output') {
+        throw new Error("The 'event-log-file' input is not supported for command: output — no engine operation runs, so there are no events to record.");
+    }
+    return config;
 }
 
 // EXTERNAL MODULE: ./node_modules/envalid/dist/index.js
@@ -142459,6 +142464,33 @@ var envalid_dist = __nccwpck_require__(8855);
 const environmentVariables = envalid_dist.cleanEnv(process.env, {
     GITHUB_WORKSPACE: envalid_dist.str(),
 });
+
+;// CONCATENATED MODULE: ./src/libs/events.ts
+
+
+/**
+ * Streams engine events to a file as JSON lines — one `EngineEvent` per
+ * line. The contract is "EngineEvent JSON per line", not the CLI's own
+ * `--event-log` byte format (field presence can differ subtly between the
+ * gRPC and file-tail delivery paths of the Automation API).
+ *
+ * Events are written incrementally, so everything emitted before a command
+ * failure survives on disk; close() flushes and resolves once the file is
+ * complete.
+ */
+function createEventLogWriter(path) {
+    external_fs_.mkdirSync((0,external_path_.dirname)(path), { recursive: true });
+    const stream = external_fs_.createWriteStream(path, { flags: 'w', encoding: 'utf-8' });
+    return {
+        onEvent: (event) => {
+            stream.write(`${JSON.stringify(event)}\n`);
+        },
+        close: () => new Promise((resolvePromise, rejectPromise) => {
+            stream.on('error', rejectPromise);
+            stream.end(() => resolvePromise());
+        }),
+    };
+}
 
 // EXTERNAL MODULE: ./node_modules/semver/index.js
 var node_modules_semver = __nccwpck_require__(2088);
@@ -144042,6 +144074,7 @@ const login = async (workDir, cloudUrl) => {
 
 
 
+
 const main = async () => {
     const downloadConfig = makeInstallationConfig();
     if (downloadConfig.success) {
@@ -144102,18 +144135,51 @@ const runAction = async (config) => {
         await stack.setAllConfig(config.configMap);
     }
     startGroup(`pulumi ${config.command} on ${config.stackName}`);
+    // Streams engine events to disk while the command runs, so the file exists
+    // even when the command fails (config rejects event-log-file for `output`,
+    // where no engine operation runs).
+    const eventLogWriter = config.eventLogFile
+        ? createEventLogWriter((0,external_path_.resolve)(workDir, config.eventLogFile))
+        : undefined;
+    const engineEventHooks = eventLogWriter
+        ? { onEvent: eventLogWriter.onEvent }
+        : {};
     const actions = {
-        up: () => stack.up({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
-        update: () => stack.up({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
-        refresh: () => stack.refresh({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
-        destroy: () => stack.destroy({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+        up: () => stack
+            .up({ onOutput, ...engineEventHooks, ...config.options })
+            .then((r) => [r.stdout, r.stderr]),
+        update: () => stack
+            .up({ onOutput, ...engineEventHooks, ...config.options })
+            .then((r) => [r.stdout, r.stderr]),
+        refresh: () => stack
+            .refresh({ onOutput, ...engineEventHooks, ...config.options })
+            .then((r) => [r.stdout, r.stderr]),
+        destroy: () => stack
+            .destroy({ onOutput, ...engineEventHooks, ...config.options })
+            .then((r) => [r.stdout, r.stderr]),
         preview: () => stack
-            .preview({ onOutput, ...config.options })
+            .preview({ onOutput, ...engineEventHooks, ...config.options })
             .then((r) => [r.stdout, r.stderr]),
         output: () => Promise.resolve(['', '']) //do nothing, outputs are fetched anyway afterwards
     };
     core_debug(`Running action ${config.command}`);
-    const [stdout, stderr] = await actions[config.command]();
+    let stdout;
+    let stderr;
+    try {
+        [stdout, stderr] = await actions[config.command]();
+    }
+    catch (err) {
+        // Failure keeps upstream semantics (the rethrow lands in the top-level
+        // handler: setFailed, no per-key outputs, no PR comment) — but the
+        // disposition is published so a workflow-level `continue-on-error: true`
+        // step can distinguish a failed command from an infrastructure error,
+        // and the event log above is already on disk.
+        setOutput('command-result', 'failed');
+        throw err;
+    }
+    finally {
+        await eventLogWriter?.close();
+    }
     core_debug(`Done running action ${config.command}`);
     if (stderr !== '') {
         if (config.options.logToStdErr) {
@@ -144149,13 +144215,16 @@ const runAction = async (config) => {
         secretMasking: config.secretMasking,
         suppressSecretOutputs: config.suppressSecretOutputs,
     });
-    // Set after the per-key loop so the declared aggregate wins a collision
-    // with a stack output of the same name (unlike `output`, which a stack
-    // output can shadow because it is set before the loop).
-    if (Object.prototype.hasOwnProperty.call(outputs, 'stack-outputs')) {
-        warning("The stack output named 'stack-outputs' is shadowed by the action's aggregate stack-outputs output.");
+    // Set after the per-key loop so the declared outputs win a collision with
+    // a stack output of the same name (unlike `output`, which a stack output
+    // can shadow because it is set before the loop).
+    for (const declared of ['stack-outputs', 'command-result']) {
+        if (Object.prototype.hasOwnProperty.call(outputs, declared)) {
+            warning(`The stack output named '${declared}' is shadowed by the action's declared ${declared} output.`);
+        }
     }
     setOutput('stack-outputs', buildStackOutputsJson(outputs, config.stackOutputsSecrets));
+    setOutput('command-result', 'succeeded');
     // Only comment on the pull request if the command is not `output`.
     if (config.command !== "output") {
         const isPullRequest = github_context.payload.pull_request !== undefined;

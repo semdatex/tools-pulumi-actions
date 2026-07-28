@@ -17,6 +17,7 @@ import {
   makeInstallationConfig,
 } from './config';
 import { environmentVariables } from './libs/envs';
+import { createEventLogWriter } from './libs/events';
 import {
   buildStackOutputsJson,
   fetchOutputsWithoutDecrypting,
@@ -104,23 +105,56 @@ const runAction = async (config: Config): Promise<void> => {
 
   core.startGroup(`pulumi ${config.command} on ${config.stackName}`);
 
+  // Streams engine events to disk while the command runs, so the file exists
+  // even when the command fails (config rejects event-log-file for `output`,
+  // where no engine operation runs).
+  const eventLogWriter = config.eventLogFile
+    ? createEventLogWriter(resolve(workDir, config.eventLogFile))
+    : undefined;
+  const engineEventHooks = eventLogWriter
+    ? { onEvent: eventLogWriter.onEvent }
+    : {};
+
   const actions: Record<Commands, () => Promise<[string, string]>> = {
-    up: () => stack.up({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+    up: () =>
+      stack
+        .up({ onOutput, ...engineEventHooks, ...config.options })
+        .then((r) => [r.stdout, r.stderr]),
     update: () =>
-      stack.up({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+      stack
+        .up({ onOutput, ...engineEventHooks, ...config.options })
+        .then((r) => [r.stdout, r.stderr]),
     refresh: () =>
-      stack.refresh({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+      stack
+        .refresh({ onOutput, ...engineEventHooks, ...config.options })
+        .then((r) => [r.stdout, r.stderr]),
     destroy: () =>
-      stack.destroy({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+      stack
+        .destroy({ onOutput, ...engineEventHooks, ...config.options })
+        .then((r) => [r.stdout, r.stderr]),
     preview: () =>
       stack
-        .preview({ onOutput, ...config.options })
+        .preview({ onOutput, ...engineEventHooks, ...config.options })
         .then((r) => [r.stdout, r.stderr]),
     output: () => Promise.resolve(['', '']) //do nothing, outputs are fetched anyway afterwards
   };
 
   core.debug(`Running action ${config.command}`);
-  const [stdout, stderr] = await actions[config.command]();
+  let stdout: string;
+  let stderr: string;
+  try {
+    [stdout, stderr] = await actions[config.command]();
+  } catch (err) {
+    // Failure keeps upstream semantics (the rethrow lands in the top-level
+    // handler: setFailed, no per-key outputs, no PR comment) — but the
+    // disposition is published so a workflow-level `continue-on-error: true`
+    // step can distinguish a failed command from an infrastructure error,
+    // and the event log above is already on disk.
+    core.setOutput('command-result', 'failed');
+    throw err;
+  } finally {
+    await eventLogWriter?.close();
+  }
   core.debug(`Done running action ${config.command}`);
   if (stderr !== '') {
     if (config.options.logToStdErr) {
@@ -157,18 +191,21 @@ const runAction = async (config: Config): Promise<void> => {
     suppressSecretOutputs: config.suppressSecretOutputs,
   });
 
-  // Set after the per-key loop so the declared aggregate wins a collision
-  // with a stack output of the same name (unlike `output`, which a stack
-  // output can shadow because it is set before the loop).
-  if (Object.prototype.hasOwnProperty.call(outputs, 'stack-outputs')) {
-    core.warning(
-      "The stack output named 'stack-outputs' is shadowed by the action's aggregate stack-outputs output.",
-    );
+  // Set after the per-key loop so the declared outputs win a collision with
+  // a stack output of the same name (unlike `output`, which a stack output
+  // can shadow because it is set before the loop).
+  for (const declared of ['stack-outputs', 'command-result']) {
+    if (Object.prototype.hasOwnProperty.call(outputs, declared)) {
+      core.warning(
+        `The stack output named '${declared}' is shadowed by the action's declared ${declared} output.`,
+      );
+    }
   }
   core.setOutput(
     'stack-outputs',
     buildStackOutputsJson(outputs, config.stackOutputsSecrets),
   );
+  core.setOutput('command-result', 'succeeded');
 
   // Only comment on the pull request if the command is not `output`.
   if (config.command !== "output") {

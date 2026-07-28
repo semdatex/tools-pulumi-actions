@@ -171,6 +171,13 @@ The action can be configured with the following arguments:
   decrypts secret outputs at all. Unlike `suppress-outputs`, which only
   affects CLI display.
 
+- `event-log-file` - (optional) Write the engine events of the operation to
+  this file as JSON lines (one `EngineEvent` per line), including when the
+  command fails. Not supported for `command: output`. To post-process a
+  command that is expected to fail (e.g. a preview refusing a protected
+  delete), set `continue-on-error: true` on the *step*, check the
+  `command-result` output, and read the event file — it is already on disk.
+
 - `plan` - (optional) Used for
   [update plans](https://www.pulumi.com/docs/concepts/update-plans/)
 

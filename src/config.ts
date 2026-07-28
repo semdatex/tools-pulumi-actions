@@ -62,7 +62,7 @@ export function makeConfig() {
       throw new Error(`pulumi-version-file '${versionFile}' does not exist`);
     }
   }
-  return {
+  const config = {
     command: getUnionInput('command', {
       required: true,
       alternatives: [
@@ -100,6 +100,7 @@ export function makeConfig() {
         alternatives: ['exclude', 'plaintext'] as const,
       }) ?? 'exclude',
     suppressSecretOutputs: getBooleanInput('suppress-secret-outputs'),
+    eventLogFile: getInput('event-log-file'),
 
     options: {
       parallel: getNumberInput('parallel', {}),
@@ -131,6 +132,12 @@ export function makeConfig() {
       debug: getBooleanInput('debug'),
     },
   };
+  if (config.eventLogFile && config.command === 'output') {
+    throw new Error(
+      "The 'event-log-file' input is not supported for command: output — no engine operation runs, so there are no events to record.",
+    );
+  }
+  return config;
 }
 
 export type Config = ReturnType<typeof makeConfig>;

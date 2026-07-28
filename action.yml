@@ -129,6 +129,9 @@ inputs:
     description: 'If true, secret stack outputs are not set as individual step outputs; non-secret outputs are unaffected. Together with the default stack-outputs-secrets: exclude, the action never decrypts secret outputs at all. Unlike suppress-outputs, which only affects CLI display.'
     required: false
     default: 'false'
+  event-log-file:
+    description: 'Write the engine events of the operation to this file as JSON lines (one event per line), including when the command fails. Not supported for command: output. Relative paths resolve against work-dir.'
+    required: false
   always-include-summary:
     description: 'If comments must be trimmed, trim them from the front. This ensures the resources summary is always included in the comment'
     required: false
@@ -153,6 +156,8 @@ outputs:
     description: Output from running command
   stack-outputs:
     description: 'JSON object of stack outputs, `{name: {value, secret}}`. Secret values are omitted unless stack-outputs-secrets is `plaintext`.'
+  command-result:
+    description: 'Disposition of the Pulumi command: succeeded or failed. Set even when the action fails.'
 runs:
   using: 'node24'
   main: 'dist/index.js'

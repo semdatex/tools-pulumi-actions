@@ -54,6 +54,12 @@ not record our changes. Put fork-relevant notes here instead.
   fetches outputs via the CLI without `--show-secrets`, so plaintext secrets
   never enter the process. Existing per-key outputs and `output` are untouched
   with default inputs.
+- **`event-log-file` and `command-result`** — structured engine events as
+  JSONL for up/refresh/destroy/preview, written incrementally so the file
+  survives a failing command, plus a declared `command-result: succeeded |
+  failed` output that is set even on failure (upstream sets no outputs at all
+  then). Failure semantics are otherwise unchanged; combine with a
+  workflow-level `continue-on-error: true` to post-process expected failures.
 
 ## `dist/` must be committed with your change
 
