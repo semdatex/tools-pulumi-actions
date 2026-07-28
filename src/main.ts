@@ -17,7 +17,11 @@ import {
   makeInstallationConfig,
 } from './config';
 import { environmentVariables } from './libs/envs';
-import { publishStackOutputs } from './libs/outputs';
+import {
+  buildStackOutputsJson,
+  fetchOutputsWithoutDecrypting,
+  publishStackOutputs,
+} from './libs/outputs';
 import { handlePullRequestMessage } from './libs/pr';
 import * as pulumiCli from './libs/pulumi-cli';
 import { handleSummaryMessage } from './libs/summary';
@@ -129,7 +133,13 @@ const runAction = async (config: Config): Promise<void> => {
   core.setOutput('output', stdout);
 
   let outputs: OutputMap;
-  if (config.command === "output") {
+  if (config.suppressSecretOutputs && config.stackOutputsSecrets === 'exclude') {
+    // Nothing the action publishes will contain a secret value, so don't
+    // decrypt any: the Automation API's outputs()/stackOutputs() always run
+    // `--show-secrets`, while the raw CLI without it never lets plaintext
+    // secrets enter the process.
+    outputs = await fetchOutputsWithoutDecrypting(workDir, config.stackName);
+  } else if (config.command === "output") {
     // When the command is `output` we didn't initialize `stack`, because we
     // wanted to avoid the underlying call to `pulumi stack select`, which
     // requires a Pulumi.yaml file to be present. Instead, we can use the
@@ -142,7 +152,23 @@ const runAction = async (config: Config): Promise<void> => {
     outputs = await stack.outputs();
   }
 
-  publishStackOutputs(outputs, { secretMasking: config.secretMasking });
+  publishStackOutputs(outputs, {
+    secretMasking: config.secretMasking,
+    suppressSecretOutputs: config.suppressSecretOutputs,
+  });
+
+  // Set after the per-key loop so the declared aggregate wins a collision
+  // with a stack output of the same name (unlike `output`, which a stack
+  // output can shadow because it is set before the loop).
+  if (Object.prototype.hasOwnProperty.call(outputs, 'stack-outputs')) {
+    core.warning(
+      "The stack output named 'stack-outputs' is shadowed by the action's aggregate stack-outputs output.",
+    );
+  }
+  core.setOutput(
+    'stack-outputs',
+    buildStackOutputsJson(outputs, config.stackOutputsSecrets),
+  );
 
   // Only comment on the pull request if the command is not `output`.
   if (config.command !== "output") {

@@ -142418,6 +142418,10 @@ function makeConfig() {
         secretMasking: getUnionInput('secret-masking', {
             alternatives: ['nested', 'exact'],
         }) ?? 'nested',
+        stackOutputsSecrets: getUnionInput('stack-outputs-secrets', {
+            alternatives: ['exclude', 'plaintext'],
+        }) ?? 'exclude',
+        suppressSecretOutputs: inputs_getBooleanInput('suppress-secret-outputs'),
         options: {
             parallel: getNumberInput('parallel', {}),
             message: inputs_getInput('message'),
@@ -142455,297 +142459,6 @@ var envalid_dist = __nccwpck_require__(8855);
 const environmentVariables = envalid_dist.cleanEnv(process.env, {
     GITHUB_WORKSPACE: envalid_dist.str(),
 });
-
-;// CONCATENATED MODULE: ./src/libs/outputs.ts
-
-// Leaves whose string form is shorter than this are not masked: a registered
-// mask replaces every occurrence of the literal in all subsequent log lines,
-// and very short fragments ("us", "1") occur everywhere. GitHub applies the
-// same reasoning to repository secrets, which it wants 8+ characters long.
-const MIN_MASKED_LEAF_LENGTH = 4;
-function maskLiteral(literal) {
-    if (literal === '') {
-        return;
-    }
-    if (literal.length < MIN_MASKED_LEAF_LENGTH) {
-        core_debug(`not masking a secret leaf shorter than ${MIN_MASKED_LEAF_LENGTH} characters; ` +
-            'masking it would corrupt unrelated log lines');
-        return;
-    }
-    core_setSecret(literal);
-}
-// Masks every maskable leaf of a structured secret value. `root` marks the
-// top-level value, whose exact serialization is already registered by the
-// caller — only the parts that serialization does not protect (nested leaves,
-// individual lines of multiline strings) need extra masks there.
-function maskLeaves(value, root) {
-    if (typeof value === 'string') {
-        if (!root) {
-            maskLiteral(value);
-        }
-        if (value.includes('\n')) {
-            // The runner masks whole literals; a multiline secret that later
-            // appears line-by-line would otherwise escape.
-            for (const line of value.split('\n')) {
-                maskLiteral(line);
-            }
-        }
-        return;
-    }
-    if (typeof value === 'number') {
-        if (!root) {
-            maskLiteral(String(value));
-        }
-        return;
-    }
-    if (typeof value === 'boolean') {
-        // Masking "true"/"false" would corrupt all subsequent logs.
-        core_debug('not masking a boolean secret leaf');
-        return;
-    }
-    if (Array.isArray(value)) {
-        for (const element of value) {
-            maskLeaves(element, false);
-        }
-        return;
-    }
-    if (typeof value === 'object' && value !== null) {
-        for (const element of Object.values(value)) {
-            maskLeaves(element, false);
-        }
-    }
-}
-/**
- * Publishes every stack output as a step output of the action, registering
- * log masks for the values Pulumi marks as secret.
- *
- * All masks are registered before the first value is written, so nothing
- * emitted afterwards can leak a value that was about to be masked. What lands
- * in GITHUB_OUTPUT is identical in both masking modes — masks only affect log
- * rendering (and GitHub's stripping of job outputs that contain masked
- * values).
- */
-function publishStackOutputs(outputs, options) {
-    const masking = options?.secretMasking ?? 'nested';
-    for (const outExport of Object.values(outputs)) {
-        if (!outExport.secret) {
-            continue;
-        }
-        // The exact serialized value, as upstream has always masked it.
-        core_setSecret(outExport.value);
-        if (masking === 'nested') {
-            maskLeaves(outExport.value, true);
-        }
-    }
-    for (const [outKey, outExport] of Object.entries(outputs)) {
-        setOutput(outKey, outExport.value);
-    }
-}
-
-;// CONCATENATED MODULE: ./node_modules/dedent/dist/dedent.mjs
-function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); enumerableOnly && (symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; })), keys.push.apply(keys, symbols); } return keys; }
-function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = null != arguments[i] ? arguments[i] : {}; i % 2 ? ownKeys(Object(source), !0).forEach(function (key) { _defineProperty(target, key, source[key]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } return target; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); }
-const dedent = createDedent({});
-/* harmony default export */ const dist_dedent = (dedent);
-function createDedent(options) {
-  dedent.withOptions = newOptions => createDedent(_objectSpread(_objectSpread({}, options), newOptions));
-  return dedent;
-  function dedent(strings, ...values) {
-    const raw = typeof strings === "string" ? [strings] : strings.raw;
-    const {
-      alignValues = false,
-      escapeSpecialCharacters = Array.isArray(strings),
-      trimWhitespace = true
-    } = options;
-
-    // first, perform interpolation
-    let result = "";
-    for (let i = 0; i < raw.length; i++) {
-      let next = raw[i];
-      if (escapeSpecialCharacters) {
-        // handle escaped newlines, backticks, and interpolation characters
-        next = next.replace(/\\\n[ \t]*/g, "").replace(/\\`/g, "`").replace(/\\\$/g, "$").replace(/\\\{/g, "{");
-      }
-      result += next;
-      if (i < values.length) {
-        const value = alignValues ? alignValue(values[i], result) : values[i];
-
-        // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
-        result += value;
-      }
-    }
-
-    // now strip indentation
-    const lines = result.split("\n");
-    let mindent = null;
-    for (const l of lines) {
-      const m = l.match(/^(\s+)\S+/);
-      if (m) {
-        const indent = m[1].length;
-        if (!mindent) {
-          // this is the first indented line
-          mindent = indent;
-        } else {
-          mindent = Math.min(mindent, indent);
-        }
-      }
-    }
-    if (mindent !== null) {
-      const m = mindent; // appease TypeScript
-      result = lines
-      // https://github.com/typescript-eslint/typescript-eslint/issues/7140
-      // eslint-disable-next-line @typescript-eslint/prefer-string-starts-ends-with
-      .map(l => l[0] === " " || l[0] === "\t" ? l.slice(m) : l).join("\n");
-    }
-
-    // dedent eats leading and trailing whitespace too
-    if (trimWhitespace) {
-      result = result.trim();
-    }
-
-    // Unescape escapes after trimming so sequences like `\n`, `\t`,
-    // `\xHH` and `\u{...}` are preserved (fixes #24)
-    if (escapeSpecialCharacters) {
-      result = result.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "\r").replace(/\\v/g, "\v").replace(/\\b/g, "\b").replace(/\\f/g, "\f").replace(/\\0/g, "\0").replace(/\\x([\da-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\u\{([\da-fA-F]{1,6})\}/g, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/\\u([\da-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-    }
-
-    // Workaround for Bun issue with Unicode characters
-    // https://github.com/oven-sh/bun/issues/8745
-    if (typeof Bun !== "undefined") {
-      result = result.replace(
-      // Matches e.g. \\u{1f60a} or \\u5F1F
-      /\\u(?:\{([\da-fA-F]{1,6})\}|([\da-fA-F]{4}))/g, (_, braced, unbraced) => {
-        var _ref;
-        const hex = (_ref = braced !== null && braced !== void 0 ? braced : unbraced) !== null && _ref !== void 0 ? _ref : "";
-        return String.fromCodePoint(parseInt(hex, 16));
-      });
-    }
-    return result;
-  }
-}
-
-/**
- * Adjusts the indentation of a multi-line interpolated value to match the current line.
- */
-function alignValue(value, precedingText) {
-  if (typeof value !== "string" || !value.includes("\n")) {
-    return value;
-  }
-  const currentLine = precedingText.slice(precedingText.lastIndexOf("\n") + 1);
-  const indentMatch = currentLine.match(/^(\s+)/);
-  if (indentMatch) {
-    const indent = indentMatch[1];
-    return value.replace(/\n/g, `\n${indent}`);
-  }
-  return value;
-}
-
-;// CONCATENATED MODULE: ./src/libs/pr.ts
-
-
-
-
-
-function trimOutputByCharacters(message, maxLength, alwaysIncludeSummary) {
-    /**
-     *  Trim message to maxLength
-     *  message: string to trim
-     *  maxLength: Maximum number of characters of final message
-     *  alwaysIncludeSummary: if true, trim message from front (if trimming is needed), otherwise from end
-     *
-     *  return message and information if message was trimmed
-     */
-    let trimmed = false;
-    // Check if message exceeds max characters
-    if (message.length > maxLength) {
-        // Trim input message by number of exceeded characters from front or back as configured
-        const dif = message.length - maxLength;
-        if (alwaysIncludeSummary) {
-            message = message.substring(dif, message.length);
-        }
-        else {
-            message = message.substring(0, message.length - dif);
-        }
-        trimmed = true;
-    }
-    return [message, trimmed];
-}
-function extractViewLiveLink(output) {
-    /**
-     *  Extracts the Pulumi preview link from the output
-     *  output: pulumi preview output
-     *
-     *  return link to the Pulumi preview
-     */
-    const lines = output.split('\n');
-    const linkLine = lines.find((line) => line.includes('View Live:'));
-    if (!linkLine) {
-        return '';
-    }
-    return linkLine.split('View Live: ')[1];
-}
-async function handlePullRequestMessage(config, projectName, output) {
-    const { githubToken, command, stackName, editCommentOnPr, alwaysIncludeSummary, } = config;
-    // Remove ANSI symbols from output because they are not supported in GitHub PR message
-    output = stripAnsiControlCodes(output);
-    // GitHub limits PR comment characters to 65_535, use lower max to keep buffer for variable values
-    const MAX_CHARACTER_COMMENT = 64_000;
-    const heading = `#### :tropical_drink: \`${command}\` on ${projectName}/${stackName}`;
-    const summary = '<summary>Pulumi report</summary>';
-    const [message, trimmed] = trimOutputByCharacters(output, MAX_CHARACTER_COMMENT, alwaysIncludeSummary);
-    const viewLiveLink = extractViewLiveLink(output);
-    const body = dist_dedent `
-    ${heading}
-
-    <details>
-    ${summary}
-    ${viewLiveLink ? `\n[View in Pulumi Cloud](${viewLiveLink})\n` : ''}
-    ${trimmed && alwaysIncludeSummary
-        ? ':warning: **Warn**: The output was too long and trimmed from the front.'
-        : ''}
-    <pre>
-    ${message}
-    </pre>
-    ${trimmed && !alwaysIncludeSummary
-        ? ':warning: **Warn**: The output was too long and trimmed.'
-        : ''}
-    </details>
-  `;
-    const { payload, repo } = github_context;
-    // Assumes PR numbers are always positive.
-    const nr = config.commentOnPrNumber || payload.pull_request?.number;
-    (0,invariant/* invariant */.V1)(nr, 'Missing pull request event data.');
-    const octokit = getOctokit(githubToken);
-    try {
-        if (editCommentOnPr) {
-            const { data: comments } = await octokit.rest.issues.listComments({
-                ...repo,
-                issue_number: nr,
-            });
-            const comment = comments.find((comment) => comment.body.startsWith(heading) && comment.body.includes(summary));
-            // If comment exists, update it.
-            if (comment) {
-                await octokit.rest.issues.updateComment({
-                    ...repo,
-                    comment_id: comment.id,
-                    body,
-                });
-                return;
-            }
-        }
-    }
-    catch {
-        warning('Not able to edit comment, defaulting to creating a new comment.');
-    }
-    await octokit.rest.issues.createComment({
-        ...repo,
-        issue_number: nr,
-        body,
-    });
-}
 
 // EXTERNAL MODULE: ./node_modules/semver/index.js
 var node_modules_semver = __nccwpck_require__(2088);
@@ -143910,6 +143623,349 @@ async function downloadCli(range) {
     }
 }
 
+;// CONCATENATED MODULE: ./src/libs/outputs.ts
+
+
+// Leaves whose string form is shorter than this are not masked: a registered
+// mask replaces every occurrence of the literal in all subsequent log lines,
+// and very short fragments ("us", "1") occur everywhere. GitHub applies the
+// same reasoning to repository secrets, which it wants 8+ characters long.
+const MIN_MASKED_LEAF_LENGTH = 4;
+function maskLiteral(literal) {
+    if (literal === '') {
+        return;
+    }
+    if (literal.length < MIN_MASKED_LEAF_LENGTH) {
+        core_debug(`not masking a secret leaf shorter than ${MIN_MASKED_LEAF_LENGTH} characters; ` +
+            'masking it would corrupt unrelated log lines');
+        return;
+    }
+    core_setSecret(literal);
+}
+// Masks every maskable leaf of a structured secret value. `root` marks the
+// top-level value, whose exact serialization is already registered by the
+// caller — only the parts that serialization does not protect (nested leaves,
+// individual lines of multiline strings) need extra masks there.
+function maskLeaves(value, root) {
+    if (typeof value === 'string') {
+        if (!root) {
+            maskLiteral(value);
+        }
+        if (value.includes('\n')) {
+            // The runner masks whole literals; a multiline secret that later
+            // appears line-by-line would otherwise escape.
+            for (const line of value.split('\n')) {
+                maskLiteral(line);
+            }
+        }
+        return;
+    }
+    if (typeof value === 'number') {
+        if (!root) {
+            maskLiteral(String(value));
+        }
+        return;
+    }
+    if (typeof value === 'boolean') {
+        // Masking "true"/"false" would corrupt all subsequent logs.
+        core_debug('not masking a boolean secret leaf');
+        return;
+    }
+    if (Array.isArray(value)) {
+        for (const element of value) {
+            maskLeaves(element, false);
+        }
+        return;
+    }
+    if (typeof value === 'object' && value !== null) {
+        for (const element of Object.values(value)) {
+            maskLeaves(element, false);
+        }
+    }
+}
+/**
+ * Publishes every stack output as a step output of the action, registering
+ * log masks for the values Pulumi marks as secret.
+ *
+ * All masks are registered before the first value is written, so nothing
+ * emitted afterwards can leak a value that was about to be masked. What lands
+ * in GITHUB_OUTPUT is identical in both masking modes — masks only affect log
+ * rendering (and GitHub's stripping of job outputs that contain masked
+ * values).
+ */
+function publishStackOutputs(outputs, options) {
+    const masking = options?.secretMasking ?? 'nested';
+    for (const outExport of Object.values(outputs)) {
+        if (!outExport.secret || outExport.value === undefined) {
+            continue;
+        }
+        // The exact serialized value, as upstream has always masked it.
+        core_setSecret(outExport.value);
+        if (masking === 'nested') {
+            maskLeaves(outExport.value, true);
+        }
+    }
+    for (const [outKey, outExport] of Object.entries(outputs)) {
+        if (options?.suppressSecretOutputs && outExport.secret) {
+            continue;
+        }
+        setOutput(outKey, outExport.value);
+    }
+}
+/**
+ * Serializes an OutputMap into the aggregate `stack-outputs` JSON:
+ * `{name: {value, secret: false} | {secret: true}}`. With `exclude` (the
+ * default) secret entries are listed without their value, so consumers can
+ * detect presence without the aggregate ever containing secret material.
+ */
+function buildStackOutputsJson(outputs, secrets) {
+    const aggregate = {};
+    for (const [key, outExport] of Object.entries(outputs)) {
+        if (outExport.secret && secrets === 'exclude') {
+            aggregate[key] = { secret: true };
+        }
+        else {
+            aggregate[key] = { value: outExport.value, secret: outExport.secret };
+        }
+    }
+    return JSON.stringify(aggregate);
+}
+// What the CLI prints in place of a secret value when --show-secrets is not
+// passed. Also the Automation API's own secret-detection marker.
+const SECRET_PLACEHOLDER = '[secret]';
+/**
+ * Reads stack outputs without ever decrypting secrets.
+ *
+ * The Automation API's `stack.outputs()`/`stackOutputs()` always run
+ * `pulumi stack output --json --show-secrets`, so decrypted secret values
+ * enter the process even when nothing will publish them. Running the CLI
+ * without `--show-secrets` yields non-secret values plus `"[secret]"`
+ * markers; secret entries are returned with `value: undefined`.
+ *
+ * Inherits the Automation API's quirk that a non-secret output whose literal
+ * value is `"[secret]"` is misclassified as secret.
+ */
+async function fetchOutputsWithoutDecrypting(workDir, stackName) {
+    const result = await run('--non-interactive', '--cwd', workDir, 'stack', 'output', '--json', '--stack', stackName);
+    if (!result.success) {
+        throw new Error(`Failed to read outputs of stack ${stackName}: ${result.stderr}`);
+    }
+    const parsed = JSON.parse(result.stdout || '{}');
+    const outputs = {};
+    for (const [key, value] of Object.entries(parsed)) {
+        outputs[key] =
+            value === SECRET_PLACEHOLDER
+                ? { value: undefined, secret: true }
+                : { value, secret: false };
+    }
+    return outputs;
+}
+
+;// CONCATENATED MODULE: ./node_modules/dedent/dist/dedent.mjs
+function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); enumerableOnly && (symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; })), keys.push.apply(keys, symbols); } return keys; }
+function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = null != arguments[i] ? arguments[i] : {}; i % 2 ? ownKeys(Object(source), !0).forEach(function (key) { _defineProperty(target, key, source[key]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } return target; }
+function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
+function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
+function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); }
+const dedent = createDedent({});
+/* harmony default export */ const dist_dedent = (dedent);
+function createDedent(options) {
+  dedent.withOptions = newOptions => createDedent(_objectSpread(_objectSpread({}, options), newOptions));
+  return dedent;
+  function dedent(strings, ...values) {
+    const raw = typeof strings === "string" ? [strings] : strings.raw;
+    const {
+      alignValues = false,
+      escapeSpecialCharacters = Array.isArray(strings),
+      trimWhitespace = true
+    } = options;
+
+    // first, perform interpolation
+    let result = "";
+    for (let i = 0; i < raw.length; i++) {
+      let next = raw[i];
+      if (escapeSpecialCharacters) {
+        // handle escaped newlines, backticks, and interpolation characters
+        next = next.replace(/\\\n[ \t]*/g, "").replace(/\\`/g, "`").replace(/\\\$/g, "$").replace(/\\\{/g, "{");
+      }
+      result += next;
+      if (i < values.length) {
+        const value = alignValues ? alignValue(values[i], result) : values[i];
+
+        // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
+        result += value;
+      }
+    }
+
+    // now strip indentation
+    const lines = result.split("\n");
+    let mindent = null;
+    for (const l of lines) {
+      const m = l.match(/^(\s+)\S+/);
+      if (m) {
+        const indent = m[1].length;
+        if (!mindent) {
+          // this is the first indented line
+          mindent = indent;
+        } else {
+          mindent = Math.min(mindent, indent);
+        }
+      }
+    }
+    if (mindent !== null) {
+      const m = mindent; // appease TypeScript
+      result = lines
+      // https://github.com/typescript-eslint/typescript-eslint/issues/7140
+      // eslint-disable-next-line @typescript-eslint/prefer-string-starts-ends-with
+      .map(l => l[0] === " " || l[0] === "\t" ? l.slice(m) : l).join("\n");
+    }
+
+    // dedent eats leading and trailing whitespace too
+    if (trimWhitespace) {
+      result = result.trim();
+    }
+
+    // Unescape escapes after trimming so sequences like `\n`, `\t`,
+    // `\xHH` and `\u{...}` are preserved (fixes #24)
+    if (escapeSpecialCharacters) {
+      result = result.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "\r").replace(/\\v/g, "\v").replace(/\\b/g, "\b").replace(/\\f/g, "\f").replace(/\\0/g, "\0").replace(/\\x([\da-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\u\{([\da-fA-F]{1,6})\}/g, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/\\u([\da-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+    }
+
+    // Workaround for Bun issue with Unicode characters
+    // https://github.com/oven-sh/bun/issues/8745
+    if (typeof Bun !== "undefined") {
+      result = result.replace(
+      // Matches e.g. \\u{1f60a} or \\u5F1F
+      /\\u(?:\{([\da-fA-F]{1,6})\}|([\da-fA-F]{4}))/g, (_, braced, unbraced) => {
+        var _ref;
+        const hex = (_ref = braced !== null && braced !== void 0 ? braced : unbraced) !== null && _ref !== void 0 ? _ref : "";
+        return String.fromCodePoint(parseInt(hex, 16));
+      });
+    }
+    return result;
+  }
+}
+
+/**
+ * Adjusts the indentation of a multi-line interpolated value to match the current line.
+ */
+function alignValue(value, precedingText) {
+  if (typeof value !== "string" || !value.includes("\n")) {
+    return value;
+  }
+  const currentLine = precedingText.slice(precedingText.lastIndexOf("\n") + 1);
+  const indentMatch = currentLine.match(/^(\s+)/);
+  if (indentMatch) {
+    const indent = indentMatch[1];
+    return value.replace(/\n/g, `\n${indent}`);
+  }
+  return value;
+}
+
+;// CONCATENATED MODULE: ./src/libs/pr.ts
+
+
+
+
+
+function trimOutputByCharacters(message, maxLength, alwaysIncludeSummary) {
+    /**
+     *  Trim message to maxLength
+     *  message: string to trim
+     *  maxLength: Maximum number of characters of final message
+     *  alwaysIncludeSummary: if true, trim message from front (if trimming is needed), otherwise from end
+     *
+     *  return message and information if message was trimmed
+     */
+    let trimmed = false;
+    // Check if message exceeds max characters
+    if (message.length > maxLength) {
+        // Trim input message by number of exceeded characters from front or back as configured
+        const dif = message.length - maxLength;
+        if (alwaysIncludeSummary) {
+            message = message.substring(dif, message.length);
+        }
+        else {
+            message = message.substring(0, message.length - dif);
+        }
+        trimmed = true;
+    }
+    return [message, trimmed];
+}
+function extractViewLiveLink(output) {
+    /**
+     *  Extracts the Pulumi preview link from the output
+     *  output: pulumi preview output
+     *
+     *  return link to the Pulumi preview
+     */
+    const lines = output.split('\n');
+    const linkLine = lines.find((line) => line.includes('View Live:'));
+    if (!linkLine) {
+        return '';
+    }
+    return linkLine.split('View Live: ')[1];
+}
+async function handlePullRequestMessage(config, projectName, output) {
+    const { githubToken, command, stackName, editCommentOnPr, alwaysIncludeSummary, } = config;
+    // Remove ANSI symbols from output because they are not supported in GitHub PR message
+    output = stripAnsiControlCodes(output);
+    // GitHub limits PR comment characters to 65_535, use lower max to keep buffer for variable values
+    const MAX_CHARACTER_COMMENT = 64_000;
+    const heading = `#### :tropical_drink: \`${command}\` on ${projectName}/${stackName}`;
+    const summary = '<summary>Pulumi report</summary>';
+    const [message, trimmed] = trimOutputByCharacters(output, MAX_CHARACTER_COMMENT, alwaysIncludeSummary);
+    const viewLiveLink = extractViewLiveLink(output);
+    const body = dist_dedent `
+    ${heading}
+
+    <details>
+    ${summary}
+    ${viewLiveLink ? `\n[View in Pulumi Cloud](${viewLiveLink})\n` : ''}
+    ${trimmed && alwaysIncludeSummary
+        ? ':warning: **Warn**: The output was too long and trimmed from the front.'
+        : ''}
+    <pre>
+    ${message}
+    </pre>
+    ${trimmed && !alwaysIncludeSummary
+        ? ':warning: **Warn**: The output was too long and trimmed.'
+        : ''}
+    </details>
+  `;
+    const { payload, repo } = github_context;
+    // Assumes PR numbers are always positive.
+    const nr = config.commentOnPrNumber || payload.pull_request?.number;
+    (0,invariant/* invariant */.V1)(nr, 'Missing pull request event data.');
+    const octokit = getOctokit(githubToken);
+    try {
+        if (editCommentOnPr) {
+            const { data: comments } = await octokit.rest.issues.listComments({
+                ...repo,
+                issue_number: nr,
+            });
+            const comment = comments.find((comment) => comment.body.startsWith(heading) && comment.body.includes(summary));
+            // If comment exists, update it.
+            if (comment) {
+                await octokit.rest.issues.updateComment({
+                    ...repo,
+                    comment_id: comment.id,
+                    body,
+                });
+                return;
+            }
+        }
+    }
+    catch {
+        warning('Not able to edit comment, defaulting to creating a new comment.');
+    }
+    await octokit.rest.issues.createComment({
+        ...repo,
+        issue_number: nr,
+        body,
+    });
+}
+
 ;// CONCATENATED MODULE: ./src/libs/summary.ts
 
 
@@ -144069,7 +144125,14 @@ const runAction = async (config) => {
     }
     setOutput('output', stdout);
     let outputs;
-    if (config.command === "output") {
+    if (config.suppressSecretOutputs && config.stackOutputsSecrets === 'exclude') {
+        // Nothing the action publishes will contain a secret value, so don't
+        // decrypt any: the Automation API's outputs()/stackOutputs() always run
+        // `--show-secrets`, while the raw CLI without it never lets plaintext
+        // secrets enter the process.
+        outputs = await fetchOutputsWithoutDecrypting(workDir, config.stackName);
+    }
+    else if (config.command === "output") {
         // When the command is `output` we didn't initialize `stack`, because we
         // wanted to avoid the underlying call to `pulumi stack select`, which
         // requires a Pulumi.yaml file to be present. Instead, we can use the
@@ -144082,7 +144145,17 @@ const runAction = async (config) => {
         // initialized, so `stack.outputs()` can be used to get the stack's outputs.
         outputs = await stack.outputs();
     }
-    publishStackOutputs(outputs, { secretMasking: config.secretMasking });
+    publishStackOutputs(outputs, {
+        secretMasking: config.secretMasking,
+        suppressSecretOutputs: config.suppressSecretOutputs,
+    });
+    // Set after the per-key loop so the declared aggregate wins a collision
+    // with a stack output of the same name (unlike `output`, which a stack
+    // output can shadow because it is set before the loop).
+    if (Object.prototype.hasOwnProperty.call(outputs, 'stack-outputs')) {
+        warning("The stack output named 'stack-outputs' is shadowed by the action's aggregate stack-outputs output.");
+    }
+    setOutput('stack-outputs', buildStackOutputsJson(outputs, config.stackOutputsSecrets));
     // Only comment on the pull request if the command is not `output`.
     if (config.command !== "output") {
         const isPullRequest = github_context.payload.pull_request !== undefined;

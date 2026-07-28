@@ -17,13 +17,20 @@ jest.unstable_mockModule('@actions/core', () => ({
   debug,
 }));
 
-const { publishStackOutputs } = await import('../outputs');
+// fetchOutputsWithoutDecrypting shells out through pulumi-cli; mock it so the
+// exact argv — most importantly the absence of --show-secrets — is assertable.
+const run = jest.fn<() => Promise<{ success: boolean; stdout: string; stderr: string }>>();
+jest.unstable_mockModule('../pulumi-cli', () => ({ run }));
+
+const { publishStackOutputs, buildStackOutputsJson, fetchOutputsWithoutDecrypting } =
+  await import('../outputs');
 
 beforeEach(() => {
   calls.length = 0;
   setOutput.mockClear();
   setSecret.mockClear();
   debug.mockClear();
+  run.mockReset();
 });
 
 describe('publishStackOutputs', () => {
@@ -168,5 +175,121 @@ describe('publishStackOutputs', () => {
       expect(setOutput).toHaveBeenCalledWith('pin', 2468);
       expect(setSecret).toHaveBeenCalledWith(2468);
     });
+  });
+
+  describe('suppressSecretOutputs', () => {
+    it('skips per-key outputs for secret entries only', () => {
+      publishStackOutputs(
+        {
+          plain: { value: 'hello', secret: false },
+          password: { value: 'hunter22', secret: true },
+        },
+        { suppressSecretOutputs: true },
+      );
+      expect(setOutput).toHaveBeenCalledTimes(1);
+      expect(setOutput).toHaveBeenCalledWith('plain', 'hello');
+    });
+
+    it('still registers masks for suppressed secret values', () => {
+      publishStackOutputs(
+        { password: { value: 'hunter22', secret: true } },
+        { suppressSecretOutputs: true },
+      );
+      expect(setSecret).toHaveBeenCalledWith('hunter22');
+    });
+
+    it('does not mask value-less secret entries from the no-decrypt path', () => {
+      publishStackOutputs(
+        { password: { value: undefined, secret: true } },
+        { suppressSecretOutputs: true },
+      );
+      expect(setSecret).not.toHaveBeenCalled();
+      expect(setOutput).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('buildStackOutputsJson', () => {
+  it('lists secret entries without their value in exclude mode', () => {
+    const json = buildStackOutputsJson(
+      {
+        plain: { value: 'hello', secret: false },
+        password: { value: 'hunter22', secret: true },
+      },
+      'exclude',
+    );
+    expect(JSON.parse(json)).toEqual({
+      plain: { value: 'hello', secret: false },
+      password: { secret: true },
+    });
+    expect(json).not.toContain('hunter22');
+  });
+
+  it('includes decrypted secret values in plaintext mode', () => {
+    const json = buildStackOutputsJson(
+      { password: { value: 'hunter22', secret: true } },
+      'plaintext',
+    );
+    expect(JSON.parse(json)).toEqual({
+      password: { value: 'hunter22', secret: true },
+    });
+  });
+
+  it('keeps structured non-secret values intact', () => {
+    const connection = { host: 'db.example.com', port: 5432 };
+    const json = buildStackOutputsJson(
+      { connection: { value: connection, secret: false } },
+      'exclude',
+    );
+    expect(JSON.parse(json).connection.value).toEqual(connection);
+  });
+
+  it('serializes an empty map to an empty object', () => {
+    expect(buildStackOutputsJson({}, 'exclude')).toEqual('{}');
+  });
+});
+
+describe('fetchOutputsWithoutDecrypting', () => {
+  it('never passes --show-secrets and maps [secret] markers to value-less entries', async () => {
+    run.mockResolvedValue({
+      success: true,
+      stdout: '{"plain":"hello","password":"[secret]"}',
+      stderr: '',
+    });
+    const outputs = await fetchOutputsWithoutDecrypting('/work', 'org/proj/stack');
+    // The load-bearing assertion: the argv must not decrypt.
+    expect(run).toHaveBeenCalledWith(
+      '--non-interactive',
+      '--cwd',
+      '/work',
+      'stack',
+      'output',
+      '--json',
+      '--stack',
+      'org/proj/stack',
+    );
+    expect(run.mock.calls[0]).not.toContain('--show-secrets');
+    expect(outputs).toEqual({
+      plain: { value: 'hello', secret: false },
+      password: { value: undefined, secret: true },
+    });
+  });
+
+  it('returns an empty map for a stack without outputs', async () => {
+    run.mockResolvedValue({ success: true, stdout: '{}', stderr: '' });
+    await expect(
+      fetchOutputsWithoutDecrypting('/work', 'org/proj/stack'),
+    ).resolves.toEqual({});
+  });
+
+  it('throws with the CLI error when the command fails', async () => {
+    run.mockResolvedValue({
+      success: false,
+      stdout: '',
+      stderr: 'error: no stack named bogus found',
+    });
+    await expect(
+      fetchOutputsWithoutDecrypting('/work', 'org/proj/bogus'),
+    ).rejects.toThrow(/no stack named bogus found/);
   });
 });

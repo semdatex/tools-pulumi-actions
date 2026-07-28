@@ -161,6 +161,16 @@ The action can be configured with the following arguments:
   `nested` (default) also masks every string and number leaf inside structured
   secret outputs; `exact` masks only the exact serialized value.
 
+- `stack-outputs-secrets` - (optional) How secret stack outputs appear in the
+  `stack-outputs` output. `exclude` (default) lists secret entries without
+  their value; `plaintext` includes decrypted values (masked in logs).
+
+- `suppress-secret-outputs` - (optional) If `true`, secret stack outputs are
+  not set as individual step outputs; non-secret outputs are unaffected.
+  Together with the default `stack-outputs-secrets: exclude`, the action never
+  decrypts secret outputs at all. Unlike `suppress-outputs`, which only
+  affects CLI display.
+
 - `plan` - (optional) Used for
   [update plans](https://www.pulumi.com/docs/concepts/update-plans/)
 
@@ -231,6 +241,23 @@ action, we would use code similar to the following:
     cloud-url: gs://my-bucket
     stack-name: org-name/stack-name
 - run: echo "My pet name is ${{ steps.pulumi.outputs.pet-name }}"
+```
+
+Every stack output is also collected into one declared `stack-outputs` output:
+a JSON object of the shape `{"name": {"value": ..., "secret": false}, "db-password": {"secret": true}}`.
+Unlike `toJSON(steps.pulumi.outputs)` it contains neither the command log nor —
+by default — any secret value, so it is safe to pass across jobs (GitHub strips
+job outputs that contain masked values) and `fromJSON(...)` yields real objects
+instead of double-encoded strings:
+
+```yaml
+jobs:
+  deploy:
+    outputs:
+      stack-outputs: ${{ steps.pulumi.outputs['stack-outputs'] }}
+  downstream:
+    needs: deploy
+    if: fromJSON(needs.deploy.outputs.stack-outputs || '{}').pet-name != null
 ```
 
 the `pet-name` is available as a named output

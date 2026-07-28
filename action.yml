@@ -121,6 +121,14 @@ inputs:
     description: 'How secret stack outputs are masked in logs. `nested` (default) also masks every string and number leaf inside structured secret outputs; `exact` masks only the exact serialized value (the previous behavior).'
     required: false
     default: 'nested'
+  stack-outputs-secrets:
+    description: 'How secret stack outputs appear in the `stack-outputs` output. `exclude` (default) lists secret entries without their value; `plaintext` includes decrypted values (masked in logs).'
+    required: false
+    default: 'exclude'
+  suppress-secret-outputs:
+    description: 'If true, secret stack outputs are not set as individual step outputs; non-secret outputs are unaffected. Together with the default stack-outputs-secrets: exclude, the action never decrypts secret outputs at all. Unlike suppress-outputs, which only affects CLI display.'
+    required: false
+    default: 'false'
   always-include-summary:
     description: 'If comments must be trimmed, trim them from the front. This ensures the resources summary is always included in the comment'
     required: false
@@ -143,6 +151,8 @@ inputs:
 outputs:
   output:
     description: Output from running command
+  stack-outputs:
+    description: 'JSON object of stack outputs, `{name: {value, secret}}`. Secret values are omitted unless stack-outputs-secrets is `plaintext`.'
 runs:
   using: 'node24'
   main: 'dist/index.js'
