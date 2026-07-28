@@ -144107,9 +144107,13 @@ const runAction = async (config) => {
         update: () => stack.up({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
         refresh: () => stack.refresh({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
         destroy: () => stack.destroy({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
-        preview: () => stack
-            .preview({ onOutput, ...config.options })
-            .then((r) => [r.stdout, r.stderr]),
+        preview: async () => {
+            const { stdout, stderr } = await stack.preview({
+                onOutput,
+                ...config.options
+            });
+            return [stdout, stderr];
+        },
         output: () => Promise.resolve(['', '']) //do nothing, outputs are fetched anyway afterwards
     };
     core_debug(`Running action ${config.command}`);
