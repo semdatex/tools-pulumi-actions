@@ -35,6 +35,10 @@ not record our changes. Put fork-relevant notes here instead.
   tests that pin the current `setOutput`/`setSecret` behavior, including call
   order. No behavior change — groundwork for the output/secret features, which
   all land in that module instead of `main.ts`.
+- **`preview` streams its output** through `onOutput` like `up`/`refresh`/
+  `destroy` do, instead of buffering until the command exits. Long previews are
+  now diagnosable while they run; stderr is no longer printed twice. The
+  `output` step output and PR-comment/summary content are unchanged.
 
 ## `dist/` must be committed with your change
 

@@ -109,9 +109,10 @@ const runAction = async (config: Config): Promise<void> => {
     destroy: () =>
       stack.destroy({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
     preview: async () => {
-      const { stdout, stderr } = await stack.preview(config.options);
-      onOutput(stdout);
-      onOutput(stderr);
+      const { stdout, stderr } = await stack.preview({
+        onOutput,
+        ...config.options
+      });
       return [stdout, stderr];
     },
     output: () => Promise.resolve(['', '']) //do nothing, outputs are fetched anyway afterwards
