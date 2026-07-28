@@ -132,10 +132,14 @@ const runAction = async (config: Config): Promise<void> => {
       stack
         .destroy({ onOutput, ...engineEventHooks, ...config.options })
         .then((r) => [r.stdout, r.stderr]),
-    preview: () =>
-      stack
-        .preview({ onOutput, ...engineEventHooks, ...config.options })
-        .then((r) => [r.stdout, r.stderr]),
+    preview: async () => {
+      const { stdout, stderr } = await stack.preview({
+        onOutput,
+        ...engineEventHooks,
+        ...config.options
+      });
+      return [stdout, stderr];
+    },
     output: () => Promise.resolve(['', '']) //do nothing, outputs are fetched anyway afterwards
   };
 
