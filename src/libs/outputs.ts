@@ -1,5 +1,6 @@
 import * as core from '@actions/core';
 import { OutputMap } from '@pulumi/pulumi/automation';
+import * as pulumiCli from './pulumi-cli';
 
 /**
  * How secret stack outputs are masked in logs.
@@ -80,23 +81,16 @@ function maskLeaves(value: unknown, root: boolean): void {
 }
 
 /**
- * Publishes every stack output as a step output of the action, registering
- * log masks for the values Pulumi marks as secret.
- *
- * All masks are registered before the first value is written, so nothing
- * emitted afterwards can leak a value that was about to be masked. What lands
- * in GITHUB_OUTPUT is identical in both masking modes — masks only affect log
- * rendering (and GitHub's stripping of job outputs that contain masked
- * values).
+ * Registers log masks for every value Pulumi marks as secret, without
+ * writing anything to GITHUB_OUTPUT. Masks only affect log rendering (and
+ * GitHub's stripping of job outputs that contain masked values).
  */
-export function publishStackOutputs(
+export function registerSecretMasks(
   outputs: OutputMap,
-  options?: PublishOptions,
+  masking: SecretMasking = 'nested',
 ): void {
-  const masking = options?.secretMasking ?? 'nested';
-
   for (const outExport of Object.values(outputs)) {
-    if (!outExport.secret) {
+    if (!outExport.secret || outExport.value === undefined) {
       continue;
     }
     // The exact serialized value, as upstream has always masked it.
@@ -105,8 +99,92 @@ export function publishStackOutputs(
       maskLeaves(outExport.value, true);
     }
   }
+}
+
+/**
+ * Publishes every stack output as a step output of the action, registering
+ * log masks for the values Pulumi marks as secret.
+ *
+ * All masks are registered before the first value is written, so nothing
+ * emitted afterwards can leak a value that was about to be masked. What lands
+ * in GITHUB_OUTPUT is identical in both masking modes.
+ */
+export function publishStackOutputs(
+  outputs: OutputMap,
+  options?: PublishOptions,
+): void {
+  registerSecretMasks(outputs, options?.secretMasking ?? 'nested');
 
   for (const [outKey, outExport] of Object.entries(outputs)) {
     core.setOutput(outKey, outExport.value);
   }
+}
+
+/**
+ * Serializes an OutputMap into the aggregate `stack-outputs` JSON:
+ * `{name: {value, secret: false} | {secret: true}}`. Unless `includeSecrets`
+ * is set, secret entries are listed without their value, so consumers can
+ * detect presence without the aggregate ever containing secret material.
+ * With `includeSecrets`, secret entries carry their decrypted value — the
+ * caller must have registered log masks first.
+ */
+export function buildStackOutputsJson(
+  outputs: OutputMap,
+  includeSecrets = false,
+): string {
+  const aggregate: Record<string, { value?: unknown; secret: boolean }> = {};
+  for (const [key, outExport] of Object.entries(outputs)) {
+    if (outExport.secret && !includeSecrets) {
+      aggregate[key] = { secret: true };
+    } else {
+      aggregate[key] = { value: outExport.value, secret: outExport.secret };
+    }
+  }
+  return JSON.stringify(aggregate);
+}
+
+// What the CLI prints in place of a secret value when --show-secrets is not
+// passed. Also the Automation API's own secret-detection marker.
+const SECRET_PLACEHOLDER = '[secret]';
+
+/**
+ * Reads stack outputs without ever decrypting secrets.
+ *
+ * The Automation API's `stack.outputs()`/`stackOutputs()` always run
+ * `pulumi stack output --json --show-secrets`, so decrypted secret values
+ * enter the process even when nothing will publish them. Running the CLI
+ * without `--show-secrets` yields non-secret values plus `"[secret]"`
+ * markers; secret entries are returned with `value: undefined`.
+ *
+ * Inherits the Automation API's quirk that a non-secret output whose literal
+ * value is `"[secret]"` is misclassified as secret.
+ */
+export async function fetchOutputsWithoutDecrypting(
+  workDir: string,
+  stackName: string,
+): Promise<OutputMap> {
+  const result = await pulumiCli.run(
+    '--non-interactive',
+    '--cwd',
+    workDir,
+    'stack',
+    'output',
+    '--json',
+    '--stack',
+    stackName,
+  );
+  if (!result.success) {
+    throw new Error(
+      `Failed to read outputs of stack ${stackName}: ${result.stderr}`,
+    );
+  }
+  const parsed = JSON.parse(result.stdout || '{}') as Record<string, unknown>;
+  const outputs: OutputMap = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    outputs[key] =
+      value === SECRET_PLACEHOLDER
+        ? { value: undefined, secret: true }
+        : { value, secret: false };
+  }
+  return outputs;
 }

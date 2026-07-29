@@ -28,6 +28,7 @@ const defaultConfig: Record<string, string> = {
   'log-flow': 'false',
   debug: 'false',
   'secret-masking': 'nested',
+  'output-format': 'per-key',
 };
 
 function setupMockedConfig(config: Record<string, string>) {
@@ -81,6 +82,7 @@ describe('config.ts', () => {
           "targetDependents": false,
           "userAgent": "pulumi/actions@v6",
         },
+        "outputFormat": "per-key",
         "pulumiVersion": "^3",
         "remove": false,
         "secretMasking": "nested",

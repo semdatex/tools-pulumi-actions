@@ -17,7 +17,12 @@ import {
   makeInstallationConfig,
 } from './config';
 import { environmentVariables } from './libs/envs';
-import { publishStackOutputs } from './libs/outputs';
+import {
+  buildStackOutputsJson,
+  fetchOutputsWithoutDecrypting,
+  publishStackOutputs,
+  registerSecretMasks,
+} from './libs/outputs';
 import { handlePullRequestMessage } from './libs/pr';
 import * as pulumiCli from './libs/pulumi-cli';
 import { handleSummaryMessage } from './libs/summary';
@@ -131,21 +136,44 @@ const runAction = async (config: Config): Promise<void> => {
 
   core.setOutput('output', stdout);
 
-  let outputs: OutputMap;
-  if (config.command === "output") {
-    // When the command is `output` we didn't initialize `stack`, because we
-    // wanted to avoid the underlying call to `pulumi stack select`, which
-    // requires a Pulumi.yaml file to be present. Instead, we can use the
-    // `LocalWorkspace.stackOutputs()` to get the stack's outputs.
-    const ws = await LocalWorkspace.create({ ...wsOpts, workDir });
-    outputs = await ws.stackOutputs(config.stackName);
-  } else {
+  const fetchDecryptedOutputs = async (): Promise<OutputMap> => {
+    if (config.command === "output") {
+      // When the command is `output` we didn't initialize `stack`, because we
+      // wanted to avoid the underlying call to `pulumi stack select`, which
+      // requires a Pulumi.yaml file to be present. Instead, we can use the
+      // `LocalWorkspace.stackOutputs()` to get the stack's outputs.
+      const ws = await LocalWorkspace.create({ ...wsOpts, workDir });
+      return ws.stackOutputs(config.stackName);
+    }
     // When the command is not `output`, we already have a `stack` instance
     // initialized, so `stack.outputs()` can be used to get the stack's outputs.
-    outputs = await stack.outputs();
-  }
+    return stack.outputs();
+  };
 
-  publishStackOutputs(outputs, { secretMasking: config.secretMasking });
+  if (config.outputFormat === 'per-key') {
+    publishStackOutputs(await fetchDecryptedOutputs(), {
+      secretMasking: config.secretMasking,
+    });
+  } else {
+    // The json formats publish no per-key outputs.
+    let outputs: OutputMap;
+    if (config.outputFormat === 'json') {
+      // The aggregate never carries a secret value, so no secret is ever
+      // decrypted: the Automation API's outputs()/stackOutputs() always run
+      // `--show-secrets`, while the raw CLI without it never lets plaintext
+      // secrets enter the process.
+      outputs = await fetchOutputsWithoutDecrypting(workDir, config.stackName);
+    } else {
+      // json-with-secrets carries decrypted values, so masks must be
+      // registered before the aggregate is written anywhere.
+      outputs = await fetchDecryptedOutputs();
+      registerSecretMasks(outputs, config.secretMasking);
+    }
+    core.setOutput(
+      'stack-outputs',
+      buildStackOutputsJson(outputs, config.outputFormat === 'json-with-secrets'),
+    );
+  }
 
   // Only comment on the pull request if the command is not `output`.
   if (config.command !== "output") {

@@ -121,12 +121,16 @@ inputs:
     description: 'How secret stack outputs are masked in logs. `nested` (default) also masks every string and number leaf inside structured secret outputs; `exact` masks only the exact serialized value (the previous behavior).'
     required: false
     default: 'nested'
+  output-format:
+    description: 'How stack outputs are published as step outputs. per-key (default): one step output per stack output, exactly like upstream. json: no per-key outputs; instead one stack-outputs output, a JSON object {name: {value, secret}} in which secret values are omitted and never decrypted. json-with-secrets: like json, but secret entries carry their decrypted value (masked in logs; GitHub strips job outputs containing masked values, so consume it within the same job).'
+    required: false
+    default: 'per-key'
   always-include-summary:
     description: 'If comments must be trimmed, trim them from the front. This ensures the resources summary is always included in the comment'
     required: false
     default: 'false'
   continue-on-error:
-    description: 'Continue running the update even if an error is encountered'
+    description: 'Continue the update with the remaining resources even if one errors (passed through as pulumi up --continue-on-error). The command still fails afterwards. Not the GitHub Actions step property of the same name, which is what lets a job keep running past a failed step.'
     required: false
     default: 'false'
   log-verbosity:
@@ -143,6 +147,8 @@ inputs:
 outputs:
   output:
     description: Output from running command
+  stack-outputs:
+    description: 'JSON object of stack outputs, `{name: {value, secret}}`. Only set with the json output formats; secret values are omitted unless the format is json-with-secrets.'
 runs:
   using: 'node24'
   main: 'dist/index.js'
