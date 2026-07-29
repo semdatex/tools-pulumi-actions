@@ -131,9 +131,10 @@ const runAction = async (config: Config): Promise<void> => {
   } catch (err) {
     // Failure keeps upstream semantics (the rethrow lands in the top-level
     // handler: setFailed, no stack outputs, no PR comment) — but the json
-    // formats still publish the disposition, so a workflow-level
-    // `continue-on-error: true` step can distinguish a failed command from
-    // an infrastructure error.
+    // formats still publish the disposition, so a step carrying the GitHub
+    // Actions step property `continue-on-error: true` (unrelated to this
+    // action's same-named input, which is pulumi's --continue-on-error) can
+    // distinguish a failed command from an infrastructure error.
     if (config.outputFormat !== 'per-key') {
       core.setOutput('command-result', 'failed');
     }

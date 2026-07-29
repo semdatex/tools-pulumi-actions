@@ -220,6 +220,9 @@ jobs:
       - name: Preview expected to fail (fresh stack + expect-no-changes)
         uses: ./
         id: previewfail
+        # The GitHub Actions step property, so the job keeps running and the
+        # assertions below can inspect the failed step — not this action's
+        # continue-on-error input (pulumi's --continue-on-error).
         continue-on-error: true
         env:
           PULUMI_CONFIG_PASSPHRASE: not-a-secret

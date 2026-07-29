@@ -185,8 +185,11 @@ The action can be configured with the following arguments:
   long pr comments from the front instead of the back. This ensures that the
   resources summary is always included in the comment.
 
-- `continue-on-error` - (optional) If `true`, then the action will continue
-  running even if an error occurs.
+- `continue-on-error` - (optional) If `true`, Pulumi continues the update
+  with the remaining resources even if one of them errors (passed through as
+  `pulumi up --continue-on-error`); the command still fails afterwards. Not
+  the GitHub Actions *step property* of the same name, which is what lets a
+  job keep running past a failed step.
 
 By default, this action will try to authenticate Pulumi with
 [Pulumi Cloud](https://app.pulumi.com/). If you have not specified a
@@ -254,8 +257,12 @@ aggregate contains neither the command log nor any secret value, so it is
 safe to pass across jobs (GitHub strips job outputs that contain masked
 values) and `fromJSON(...)` yields real objects instead of double-encoded
 strings. json mode also sets `command-result` (`succeeded` | `failed`), even
-when the action fails — combine it with a step-level
-`continue-on-error: true` to post-process a command that is expected to fail:
+when the action fails. To post-process a command that is expected to fail,
+combine it with the GitHub Actions **step property** `continue-on-error: true`
+(set on the step itself, next to `uses:` — not under `with:`) so the job keeps
+running. That step property is unrelated to this action's `continue-on-error`
+*input*, which is passed through as `pulumi up --continue-on-error` and makes
+Pulumi carry on updating the remaining resources after one of them fails:
 
 ```yaml
 jobs:

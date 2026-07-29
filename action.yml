@@ -130,7 +130,7 @@ inputs:
     required: false
     default: 'false'
   continue-on-error:
-    description: 'Continue running the update even if an error is encountered'
+    description: 'Continue the update with the remaining resources even if one errors (passed through as pulumi up --continue-on-error). The command still fails afterwards. Not the GitHub Actions step property of the same name, which is what lets a job keep running past a failed step.'
     required: false
     default: 'false'
   log-verbosity:
