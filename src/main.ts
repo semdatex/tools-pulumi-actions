@@ -16,6 +16,7 @@ import {
   makeConfig,
   makeInstallationConfig,
 } from './config';
+import { createChangeCollector } from './libs/changes';
 import { environmentVariables } from './libs/envs';
 import {
   buildStackOutputsJson,
@@ -105,17 +106,33 @@ const runAction = async (config: Config): Promise<void> => {
 
   core.startGroup(`pulumi ${config.command} on ${config.stackName}`);
 
+  // Collects {op, urn, type} per changed resource for the json formats'
+  // resource-changes output. Harmless otherwise: with onEvent set the
+  // Automation API tails its own temp event log, nothing user-visible.
+  const changeCollector = createChangeCollector();
+  const onEvent = changeCollector.onEvent;
+
   const actions: Record<Commands, () => Promise<[string, string]>> = {
-    up: () => stack.up({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+    up: () =>
+      stack
+        .up({ onOutput, onEvent, ...config.options })
+        .then((r) => [r.stdout, r.stderr]),
     update: () =>
-      stack.up({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+      stack
+        .up({ onOutput, onEvent, ...config.options })
+        .then((r) => [r.stdout, r.stderr]),
     refresh: () =>
-      stack.refresh({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+      stack
+        .refresh({ onOutput, onEvent, ...config.options })
+        .then((r) => [r.stdout, r.stderr]),
     destroy: () =>
-      stack.destroy({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+      stack
+        .destroy({ onOutput, onEvent, ...config.options })
+        .then((r) => [r.stdout, r.stderr]),
     preview: async () => {
       const { stdout, stderr } = await stack.preview({
         onOutput,
+        onEvent,
         ...config.options
       });
       return [stdout, stderr];
@@ -131,12 +148,13 @@ const runAction = async (config: Config): Promise<void> => {
   } catch (err) {
     // Failure keeps upstream semantics (the rethrow lands in the top-level
     // handler: setFailed, no stack outputs, no PR comment) — but the json
-    // formats still publish the disposition, so a step carrying the GitHub
-    // Actions step property `continue-on-error: true` (unrelated to this
-    // action's same-named input, which is pulumi's --continue-on-error) can
-    // distinguish a failed command from an infrastructure error.
+    // formats still publish resource-changes, best-effort from the events
+    // received before the error, so a step carrying the GitHub Actions step
+    // property `continue-on-error: true` (unrelated to this action's
+    // same-named input, which is pulumi's --continue-on-error) can see what
+    // the command changed or planned to change before it failed.
     if (config.outputFormat !== 'per-key') {
-      core.setOutput('command-result', 'failed');
+      core.setOutput('resource-changes', changeCollector.toJson());
     }
     throw err;
   }
@@ -188,7 +206,8 @@ const runAction = async (config: Config): Promise<void> => {
       'stack-outputs',
       buildStackOutputsJson(outputs, config.outputFormat === 'json-with-secrets'),
     );
-    core.setOutput('command-result', 'succeeded');
+    // Empty for command: output, which performs no engine operation.
+    core.setOutput('resource-changes', changeCollector.toJson());
   }
 
   // Only comment on the pull request if the command is not `output`.

@@ -52,9 +52,11 @@ not record our changes. Put fork-relevant notes here instead.
   no per-key outputs; instead a single declared `stack-outputs` output
   `{name: {value, secret}}` with secret values omitted and never decrypted
   (the CLI runs without `--show-secrets`, so plaintext secrets never enter
-  the process), plus a `command-result: succeeded | failed` output set even
-  when the command fails (upstream sets no outputs at all then). Nothing in
-  json mode can be stripped by GitHub's masked-value rule, and `fromJSON`
+  the process), plus a `resource-changes` output — a JSON array
+  `[{op, urn, type}]` of the resources the command changed or planned to
+  change, collected in memory from engine events, published even when the
+  command fails (best-effort; upstream sets no outputs at all then). Nothing
+  in json mode can be stripped by GitHub's masked-value rule, and `fromJSON`
   yields real objects instead of double-encoded strings. `json-with-secrets`
   is `json` with decrypted secret values in the aggregate (masked in logs;
   same-job consumption only, since GitHub strips job outputs that contain
