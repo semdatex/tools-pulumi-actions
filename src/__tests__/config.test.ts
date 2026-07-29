@@ -28,9 +28,10 @@ const defaultConfig: Record<string, string> = {
   'log-flow': 'false',
   debug: 'false',
   'secret-masking': 'nested',
-  'stack-outputs-secrets': 'exclude',
+  'stack-outputs': 'off',
   'suppress-secret-outputs': 'false',
   'event-log-file': '',
+  'publish-command-result': 'false',
 };
 
 function setupMockedConfig(config: Record<string, string>) {
@@ -85,12 +86,13 @@ describe('config.ts', () => {
           "targetDependents": false,
           "userAgent": "pulumi/actions@v6",
         },
+        "publishCommandResult": false,
         "pulumiVersion": "^3",
         "remove": false,
         "secretMasking": "nested",
         "secretsProvider": "",
         "stackName": "dev",
-        "stackOutputsSecrets": "exclude",
+        "stackOutputs": "off",
         "suppressSecretOutputs": false,
         "upsert": false,
         "workDir": "./",

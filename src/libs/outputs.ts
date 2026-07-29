@@ -15,14 +15,17 @@ import * as pulumiCli from './pulumi-cli';
 export type SecretMasking = 'nested' | 'exact';
 
 /**
- * How secret stack outputs appear in the aggregate `stack-outputs` output.
+ * Whether and how the aggregate `stack-outputs` output is published.
  *
- * - `exclude`: secret entries are listed with `secret: true` but carry no
- *   value — the aggregate is safe to pass across jobs (nothing in it can be
- *   redacted or stripped).
- * - `plaintext`: secret entries carry their decrypted value (masked in logs).
+ * - `off`: the aggregate output is not set at all — what the action writes
+ *   to GITHUB_OUTPUT is identical to upstream.
+ * - `exclude-secrets`: secret entries are listed with `secret: true` but
+ *   carry no value — the aggregate is safe to pass across jobs (nothing in
+ *   it can be redacted or stripped).
+ * - `plaintext-secrets`: secret entries carry their decrypted value (masked
+ *   in logs).
  */
-export type StackOutputsSecrets = 'exclude' | 'plaintext';
+export type StackOutputsMode = 'off' | 'exclude-secrets' | 'plaintext-secrets';
 
 export interface PublishOptions {
   readonly secretMasking?: SecretMasking;
@@ -134,17 +137,17 @@ export function publishStackOutputs(
 
 /**
  * Serializes an OutputMap into the aggregate `stack-outputs` JSON:
- * `{name: {value, secret: false} | {secret: true}}`. With `exclude` (the
- * default) secret entries are listed without their value, so consumers can
- * detect presence without the aggregate ever containing secret material.
+ * `{name: {value, secret: false} | {secret: true}}`. With `exclude-secrets`
+ * secret entries are listed without their value, so consumers can detect
+ * presence without the aggregate ever containing secret material.
  */
 export function buildStackOutputsJson(
   outputs: OutputMap,
-  secrets: StackOutputsSecrets,
+  mode: Exclude<StackOutputsMode, 'off'>,
 ): string {
   const aggregate: Record<string, { value?: unknown; secret: boolean }> = {};
   for (const [key, outExport] of Object.entries(outputs)) {
-    if (outExport.secret && secrets === 'exclude') {
+    if (outExport.secret && mode === 'exclude-secrets') {
       aggregate[key] = { secret: true };
     } else {
       aggregate[key] = { value: outExport.value, secret: outExport.secret };

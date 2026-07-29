@@ -210,13 +210,13 @@ describe('publishStackOutputs', () => {
 });
 
 describe('buildStackOutputsJson', () => {
-  it('lists secret entries without their value in exclude mode', () => {
+  it('lists secret entries without their value in exclude-secrets mode', () => {
     const json = buildStackOutputsJson(
       {
         plain: { value: 'hello', secret: false },
         password: { value: 'hunter22', secret: true },
       },
-      'exclude',
+      'exclude-secrets',
     );
     expect(JSON.parse(json)).toEqual({
       plain: { value: 'hello', secret: false },
@@ -225,10 +225,10 @@ describe('buildStackOutputsJson', () => {
     expect(json).not.toContain('hunter22');
   });
 
-  it('includes decrypted secret values in plaintext mode', () => {
+  it('includes decrypted secret values in plaintext-secrets mode', () => {
     const json = buildStackOutputsJson(
       { password: { value: 'hunter22', secret: true } },
-      'plaintext',
+      'plaintext-secrets',
     );
     expect(JSON.parse(json)).toEqual({
       password: { value: 'hunter22', secret: true },
@@ -239,13 +239,13 @@ describe('buildStackOutputsJson', () => {
     const connection = { host: 'db.example.com', port: 5432 };
     const json = buildStackOutputsJson(
       { connection: { value: connection, secret: false } },
-      'exclude',
+      'exclude-secrets',
     );
     expect(JSON.parse(json).connection.value).toEqual(connection);
   });
 
   it('serializes an empty map to an empty object', () => {
-    expect(buildStackOutputsJson({}, 'exclude')).toEqual('{}');
+    expect(buildStackOutputsJson({}, 'exclude-secrets')).toEqual('{}');
   });
 });
 

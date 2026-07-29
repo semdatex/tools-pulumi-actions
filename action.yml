@@ -121,17 +121,21 @@ inputs:
     description: 'How secret stack outputs are masked in logs. `nested` (default) also masks every string and number leaf inside structured secret outputs; `exact` masks only the exact serialized value (the previous behavior).'
     required: false
     default: 'nested'
-  stack-outputs-secrets:
-    description: 'How secret stack outputs appear in the `stack-outputs` output. `exclude` (default) lists secret entries without their value; `plaintext` includes decrypted values (masked in logs).'
+  stack-outputs:
+    description: 'Publish the aggregate `stack-outputs` output. `off` (default) does not set it, keeping the action''s outputs identical to upstream. `exclude-secrets` lists secret entries without their value; `plaintext-secrets` includes decrypted values (masked in logs).'
     required: false
-    default: 'exclude'
+    default: 'off'
   suppress-secret-outputs:
-    description: 'If true, secret stack outputs are not set as individual step outputs; non-secret outputs are unaffected. Together with the default stack-outputs-secrets: exclude, the action never decrypts secret outputs at all. Unlike suppress-outputs, which only affects CLI display.'
+    description: 'If true, secret stack outputs are not set as individual step outputs; non-secret outputs are unaffected. Unless stack-outputs is plaintext-secrets, this means the action never decrypts secret outputs at all. Unlike suppress-outputs, which only affects CLI display.'
     required: false
     default: 'false'
   event-log-file:
     description: 'Write the engine events of the operation to this file as JSON lines (one event per line), including when the command fails. Not supported for command: output. Relative paths resolve against work-dir.'
     required: false
+  publish-command-result:
+    description: 'If true, set the command-result output (succeeded or failed) — even when the action fails, when no other output is set. Off by default so the action''s outputs are identical to upstream.'
+    required: false
+    default: 'false'
   always-include-summary:
     description: 'If comments must be trimmed, trim them from the front. This ensures the resources summary is always included in the comment'
     required: false
@@ -155,9 +159,9 @@ outputs:
   output:
     description: Output from running command
   stack-outputs:
-    description: 'JSON object of stack outputs, `{name: {value, secret}}`. Secret values are omitted unless stack-outputs-secrets is `plaintext`.'
+    description: 'JSON object of stack outputs, `{name: {value, secret}}`. Only set when the `stack-outputs` input enables it; secret values are omitted unless that input is `plaintext-secrets`.'
   command-result:
-    description: 'Disposition of the Pulumi command: succeeded or failed. Set even when the action fails.'
+    description: 'Disposition of the Pulumi command: succeeded or failed. Only set when publish-command-result is true — then it is set even when the action fails.'
 runs:
   using: 'node24'
   main: 'dist/index.js'
