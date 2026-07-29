@@ -165,11 +165,12 @@ The action can be configured with the following arguments:
   outputs. `per-key` (default): one step output per stack output, exactly
   like upstream. `json`: no per-key outputs; instead a single `stack-outputs`
   output — a JSON object `{name: {value, secret}}` in which secret values are
-  omitted and **never decrypted**. `json-with-secrets`: like `json`, but
-  secret entries carry their decrypted value (masked in logs). Note that
-  GitHub strips *job* outputs that contain masked values, so consume a
-  with-secrets aggregate within the same job; `json` is the format that
-  survives cross-job wiring.
+  omitted and **never decrypted** — plus a `resource-changes` output listing
+  the resources the command changed or planned to change.
+  `json-with-secrets`: like `json`, but secret entries carry their decrypted
+  value (masked in logs). Note that GitHub strips *job* outputs that contain
+  masked values, so consume a with-secrets aggregate within the same job;
+  `json` is the format that survives cross-job wiring.
 
 - `plan` - (optional) Used for
   [update plans](https://www.pulumi.com/docs/concepts/update-plans/)
@@ -255,7 +256,18 @@ never even enter the process. Unlike `toJSON(steps.pulumi.outputs)` the
 aggregate contains neither the command log nor any secret value, so it is
 safe to pass across jobs (GitHub strips job outputs that contain masked
 values) and `fromJSON(...)` yields real objects instead of double-encoded
-strings:
+strings. The json formats also set `resource-changes`: a JSON array
+`[{op, urn, type}]` of the resources the command changed (`up`, `refresh`,
+`destroy`) or planned to change (`preview`), excluding unchanged (`same`) and
+data-source `read` steps. When the command fails, `resource-changes` is still
+published, best-effort, from the events received before the error — so a
+failed preview reports *which* resources it was planning to touch. To
+post-process a command that is expected to fail, combine that with the GitHub
+Actions **step property** `continue-on-error: true` (set on the step itself,
+next to `uses:` — not under `with:`) so the job keeps running. That step
+property is unrelated to this action's `continue-on-error` *input*, which is
+passed through as `pulumi up --continue-on-error` and makes Pulumi carry on
+updating the remaining resources after one of them fails:
 
 ```yaml
 jobs:
