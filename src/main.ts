@@ -151,11 +151,13 @@ const runAction = async (config: Config): Promise<void> => {
     [stdout, stderr] = await actions[config.command]();
   } catch (err) {
     // Failure keeps upstream semantics (the rethrow lands in the top-level
-    // handler: setFailed, no per-key outputs, no PR comment) — but the
-    // disposition is published so a workflow-level `continue-on-error: true`
-    // step can distinguish a failed command from an infrastructure error,
-    // and the event log above is already on disk.
-    core.setOutput('command-result', 'failed');
+    // handler: setFailed, no per-key outputs, no PR comment) — but when
+    // opted in, the disposition is published so a workflow-level
+    // `continue-on-error: true` step can distinguish a failed command from
+    // an infrastructure error, and the event log above is already on disk.
+    if (config.publishCommandResult) {
+      core.setOutput('command-result', 'failed');
+    }
     throw err;
   } finally {
     await eventLogWriter?.close();
@@ -172,7 +174,10 @@ const runAction = async (config: Config): Promise<void> => {
   core.setOutput('output', stdout);
 
   let outputs: OutputMap;
-  if (config.suppressSecretOutputs && config.stackOutputsSecrets === 'exclude') {
+  if (
+    config.suppressSecretOutputs &&
+    config.stackOutputs !== 'plaintext-secrets'
+  ) {
     // Nothing the action publishes will contain a secret value, so don't
     // decrypt any: the Automation API's outputs()/stackOutputs() always run
     // `--show-secrets`, while the raw CLI without it never lets plaintext
@@ -196,21 +201,31 @@ const runAction = async (config: Config): Promise<void> => {
     suppressSecretOutputs: config.suppressSecretOutputs,
   });
 
-  // Set after the per-key loop so the declared outputs win a collision with
-  // a stack output of the same name (unlike `output`, which a stack output
-  // can shadow because it is set before the loop).
-  for (const declared of ['stack-outputs', 'command-result']) {
-    if (Object.prototype.hasOwnProperty.call(outputs, declared)) {
+  // Both declared outputs are off by default so the action's outputs are
+  // byte-identical to upstream unless explicitly requested. When enabled
+  // they are set after the per-key loop so they win a collision with a stack
+  // output of the same name (unlike `output`, which a stack output can
+  // shadow because it is set before the loop).
+  const declaredOutputs: [string, boolean][] = [
+    ['stack-outputs', config.stackOutputs !== 'off'],
+    ['command-result', config.publishCommandResult],
+  ];
+  for (const [declared, enabled] of declaredOutputs) {
+    if (enabled && Object.prototype.hasOwnProperty.call(outputs, declared)) {
       core.warning(
         `The stack output named '${declared}' is shadowed by the action's declared ${declared} output.`,
       );
     }
   }
-  core.setOutput(
-    'stack-outputs',
-    buildStackOutputsJson(outputs, config.stackOutputsSecrets),
-  );
-  core.setOutput('command-result', 'succeeded');
+  if (config.stackOutputs !== 'off') {
+    core.setOutput(
+      'stack-outputs',
+      buildStackOutputsJson(outputs, config.stackOutputs),
+    );
+  }
+  if (config.publishCommandResult) {
+    core.setOutput('command-result', 'succeeded');
+  }
 
   if (config.exportFile) {
     await exportStackState(

@@ -142418,11 +142418,12 @@ function makeConfig() {
         secretMasking: getUnionInput('secret-masking', {
             alternatives: ['nested', 'exact'],
         }) ?? 'nested',
-        stackOutputsSecrets: getUnionInput('stack-outputs-secrets', {
-            alternatives: ['exclude', 'plaintext'],
-        }) ?? 'exclude',
+        stackOutputs: getUnionInput('stack-outputs', {
+            alternatives: ['off', 'exclude-secrets', 'plaintext-secrets'],
+        }) ?? 'off',
         suppressSecretOutputs: inputs_getBooleanInput('suppress-secret-outputs'),
         eventLogFile: inputs_getInput('event-log-file'),
+        publishCommandResult: inputs_getBooleanInput('publish-command-result'),
         exportFile: inputs_getInput('export-file'),
         options: {
             parallel: getNumberInput('parallel', {}),
@@ -143769,14 +143770,14 @@ function publishStackOutputs(outputs, options) {
 }
 /**
  * Serializes an OutputMap into the aggregate `stack-outputs` JSON:
- * `{name: {value, secret: false} | {secret: true}}`. With `exclude` (the
- * default) secret entries are listed without their value, so consumers can
- * detect presence without the aggregate ever containing secret material.
+ * `{name: {value, secret: false} | {secret: true}}`. With `exclude-secrets`
+ * secret entries are listed without their value, so consumers can detect
+ * presence without the aggregate ever containing secret material.
  */
-function buildStackOutputsJson(outputs, secrets) {
+function buildStackOutputsJson(outputs, mode) {
     const aggregate = {};
     for (const [key, outExport] of Object.entries(outputs)) {
-        if (outExport.secret && secrets === 'exclude') {
+        if (outExport.secret && mode === 'exclude-secrets') {
             aggregate[key] = { secret: true };
         }
         else {
@@ -144199,11 +144200,13 @@ const runAction = async (config) => {
     }
     catch (err) {
         // Failure keeps upstream semantics (the rethrow lands in the top-level
-        // handler: setFailed, no per-key outputs, no PR comment) — but the
-        // disposition is published so a workflow-level `continue-on-error: true`
-        // step can distinguish a failed command from an infrastructure error,
-        // and the event log above is already on disk.
-        setOutput('command-result', 'failed');
+        // handler: setFailed, no per-key outputs, no PR comment) — but when
+        // opted in, the disposition is published so a workflow-level
+        // `continue-on-error: true` step can distinguish a failed command from
+        // an infrastructure error, and the event log above is already on disk.
+        if (config.publishCommandResult) {
+            setOutput('command-result', 'failed');
+        }
         throw err;
     }
     finally {
@@ -144220,7 +144223,8 @@ const runAction = async (config) => {
     }
     setOutput('output', stdout);
     let outputs;
-    if (config.suppressSecretOutputs && config.stackOutputsSecrets === 'exclude') {
+    if (config.suppressSecretOutputs &&
+        config.stackOutputs !== 'plaintext-secrets') {
         // Nothing the action publishes will contain a secret value, so don't
         // decrypt any: the Automation API's outputs()/stackOutputs() always run
         // `--show-secrets`, while the raw CLI without it never lets plaintext
@@ -144244,16 +144248,26 @@ const runAction = async (config) => {
         secretMasking: config.secretMasking,
         suppressSecretOutputs: config.suppressSecretOutputs,
     });
-    // Set after the per-key loop so the declared outputs win a collision with
-    // a stack output of the same name (unlike `output`, which a stack output
-    // can shadow because it is set before the loop).
-    for (const declared of ['stack-outputs', 'command-result']) {
-        if (Object.prototype.hasOwnProperty.call(outputs, declared)) {
+    // Both declared outputs are off by default so the action's outputs are
+    // byte-identical to upstream unless explicitly requested. When enabled
+    // they are set after the per-key loop so they win a collision with a stack
+    // output of the same name (unlike `output`, which a stack output can
+    // shadow because it is set before the loop).
+    const declaredOutputs = [
+        ['stack-outputs', config.stackOutputs !== 'off'],
+        ['command-result', config.publishCommandResult],
+    ];
+    for (const [declared, enabled] of declaredOutputs) {
+        if (enabled && Object.prototype.hasOwnProperty.call(outputs, declared)) {
             warning(`The stack output named '${declared}' is shadowed by the action's declared ${declared} output.`);
         }
     }
-    setOutput('stack-outputs', buildStackOutputsJson(outputs, config.stackOutputsSecrets));
-    setOutput('command-result', 'succeeded');
+    if (config.stackOutputs !== 'off') {
+        setOutput('stack-outputs', buildStackOutputsJson(outputs, config.stackOutputs));
+    }
+    if (config.publishCommandResult) {
+        setOutput('command-result', 'succeeded');
+    }
     if (config.exportFile) {
         await exportStackState(workDir, config.stackName, (0,external_path_.resolve)(workDir, config.exportFile));
     }
