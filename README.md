@@ -171,6 +171,14 @@ The action can be configured with the following arguments:
   with-secrets aggregate within the same job; `json` is the format that
   survives cross-job wiring.
 
+- `resource-changes` - (optional) If `true`, publish the `resource-changes`
+  output: a JSON array `[{op, urn, type}]` of the resources the command
+  changed (`up`, `refresh`, `destroy`) or planned to change (`preview`),
+  excluding unchanged (`same`) and data-source `read` steps. Works with any
+  `output-format`; with `per-key` the action fails if the stack itself has
+  an output named `resource-changes`, instead of silently shadowing one of
+  the two.
+
 - `plan` - (optional) Used for
   [update plans](https://www.pulumi.com/docs/concepts/update-plans/)
 
@@ -255,7 +263,17 @@ never even enter the process. Unlike `toJSON(steps.pulumi.outputs)` the
 aggregate contains neither the command log nor any secret value, so it is
 safe to pass across jobs (GitHub strips job outputs that contain masked
 values) and `fromJSON(...)` yields real objects instead of double-encoded
-strings:
+strings. With `resource-changes: true`, the action additionally sets the
+`resource-changes` output described above. When the command fails, that
+output is still published, best-effort, from the events received before the
+error — so a failed preview reports *which* resources it was planning to
+touch. To post-process a command that is expected to fail, combine that with
+the GitHub Actions **step property** `continue-on-error: true` (set on the
+step itself, next to `uses:` — not under `with:`) so the job keeps running.
+That step property is unrelated to this action's `continue-on-error`
+*input*, which is passed through as `pulumi up --continue-on-error` and
+makes Pulumi carry on updating the remaining resources after one of them
+fails:
 
 ```yaml
 jobs:

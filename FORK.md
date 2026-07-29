@@ -57,6 +57,14 @@ not record our changes. Put fork-relevant notes here instead.
   double-encoded strings. `json-with-secrets` is `json` with decrypted
   secret values in the aggregate (masked in logs; same-job consumption only,
   since GitHub strips job outputs that contain masked values).
+- **`resource-changes` input (opt-in)** — when `true`, publishes a
+  `resource-changes` output: a JSON array `[{op, urn, type}]` of the
+  resources the command changed or planned to change (`same`/`read` steps
+  excluded), collected in memory from engine events, published even when the
+  command fails (best-effort; upstream sets no outputs at all then). Works
+  with any `output-format`; with `per-key` the action fails if the stack
+  itself has an output named `resource-changes`, instead of silently
+  shadowing one of the two.
 
 ## `dist/` must be committed with your change
 
