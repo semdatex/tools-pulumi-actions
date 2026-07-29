@@ -167,6 +167,10 @@ The action can be configured with the following arguments:
   output — a JSON object `{name: {value, secret}}` in which secret values are
   omitted and **never decrypted** — plus a `command-result` output
   (`succeeded` | `failed`) that is set even when the action fails.
+  `json-with-secrets`: like `json`, but secret entries carry their decrypted
+  value (masked in logs). Note that GitHub strips *job* outputs that contain
+  masked values, so consume a with-secrets aggregate within the same job;
+  `json` is the format that survives cross-job wiring.
 
 - `plan` - (optional) Used for
   [update plans](https://www.pulumi.com/docs/concepts/update-plans/)

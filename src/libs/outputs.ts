@@ -81,21 +81,14 @@ function maskLeaves(value: unknown, root: boolean): void {
 }
 
 /**
- * Publishes every stack output as a step output of the action, registering
- * log masks for the values Pulumi marks as secret.
- *
- * All masks are registered before the first value is written, so nothing
- * emitted afterwards can leak a value that was about to be masked. What lands
- * in GITHUB_OUTPUT is identical in both masking modes — masks only affect log
- * rendering (and GitHub's stripping of job outputs that contain masked
- * values).
+ * Registers log masks for every value Pulumi marks as secret, without
+ * writing anything to GITHUB_OUTPUT. Masks only affect log rendering (and
+ * GitHub's stripping of job outputs that contain masked values).
  */
-export function publishStackOutputs(
+export function registerSecretMasks(
   outputs: OutputMap,
-  options?: PublishOptions,
+  masking: SecretMasking = 'nested',
 ): void {
-  const masking = options?.secretMasking ?? 'nested';
-
   for (const outExport of Object.values(outputs)) {
     if (!outExport.secret || outExport.value === undefined) {
       continue;
@@ -106,6 +99,21 @@ export function publishStackOutputs(
       maskLeaves(outExport.value, true);
     }
   }
+}
+
+/**
+ * Publishes every stack output as a step output of the action, registering
+ * log masks for the values Pulumi marks as secret.
+ *
+ * All masks are registered before the first value is written, so nothing
+ * emitted afterwards can leak a value that was about to be masked. What lands
+ * in GITHUB_OUTPUT is identical in both masking modes.
+ */
+export function publishStackOutputs(
+  outputs: OutputMap,
+  options?: PublishOptions,
+): void {
+  registerSecretMasks(outputs, options?.secretMasking ?? 'nested');
 
   for (const [outKey, outExport] of Object.entries(outputs)) {
     core.setOutput(outKey, outExport.value);
@@ -114,17 +122,22 @@ export function publishStackOutputs(
 
 /**
  * Serializes an OutputMap into the aggregate `stack-outputs` JSON:
- * `{name: {value, secret: false} | {secret: true}}`. Secret entries are
- * always listed without their value, so consumers can detect presence
- * without the aggregate ever containing secret material.
+ * `{name: {value, secret: false} | {secret: true}}`. Unless `includeSecrets`
+ * is set, secret entries are listed without their value, so consumers can
+ * detect presence without the aggregate ever containing secret material.
+ * With `includeSecrets`, secret entries carry their decrypted value — the
+ * caller must have registered log masks first.
  */
-export function buildStackOutputsJson(outputs: OutputMap): string {
+export function buildStackOutputsJson(
+  outputs: OutputMap,
+  includeSecrets = false,
+): string {
   const aggregate: Record<string, { value?: unknown; secret: boolean }> = {};
   for (const [key, outExport] of Object.entries(outputs)) {
-    if (outExport.secret) {
+    if (outExport.secret && !includeSecrets) {
       aggregate[key] = { secret: true };
     } else {
-      aggregate[key] = { value: outExport.value, secret: false };
+      aggregate[key] = { value: outExport.value, secret: outExport.secret };
     }
   }
   return JSON.stringify(aggregate);

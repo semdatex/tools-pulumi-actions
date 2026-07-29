@@ -22,8 +22,12 @@ jest.unstable_mockModule('@actions/core', () => ({
 const run = jest.fn<() => Promise<{ success: boolean; stdout: string; stderr: string }>>();
 jest.unstable_mockModule('../pulumi-cli', () => ({ run }));
 
-const { publishStackOutputs, buildStackOutputsJson, fetchOutputsWithoutDecrypting } =
-  await import('../outputs');
+const {
+  publishStackOutputs,
+  buildStackOutputsJson,
+  fetchOutputsWithoutDecrypting,
+  registerSecretMasks,
+} = await import('../outputs');
 
 beforeEach(() => {
   calls.length = 0;
@@ -179,8 +183,24 @@ describe('publishStackOutputs', () => {
 
 });
 
+describe('registerSecretMasks', () => {
+  it('registers masks without writing any step output', () => {
+    registerSecretMasks({
+      plain: { value: 'hello', secret: false },
+      password: { value: 'hunter22', secret: true },
+    });
+    expect(setSecret).toHaveBeenCalledWith('hunter22');
+    expect(setOutput).not.toHaveBeenCalled();
+  });
+
+  it('skips value-less secret entries from the no-decrypt path', () => {
+    registerSecretMasks({ password: { value: undefined, secret: true } });
+    expect(setSecret).not.toHaveBeenCalled();
+  });
+});
+
 describe('buildStackOutputsJson', () => {
-  it('always lists secret entries without their value', () => {
+  it('lists secret entries without their value by default', () => {
     const json = buildStackOutputsJson({
       plain: { value: 'hello', secret: false },
       password: { value: 'hunter22', secret: true },
@@ -190,6 +210,20 @@ describe('buildStackOutputsJson', () => {
       password: { secret: true },
     });
     expect(json).not.toContain('hunter22');
+  });
+
+  it('includes decrypted secret values when includeSecrets is set', () => {
+    const json = buildStackOutputsJson(
+      {
+        plain: { value: 'hello', secret: false },
+        password: { value: 'hunter22', secret: true },
+      },
+      true,
+    );
+    expect(JSON.parse(json)).toEqual({
+      plain: { value: 'hello', secret: false },
+      password: { value: 'hunter22', secret: true },
+    });
   });
 
   it('keeps structured non-secret values intact', () => {

@@ -55,7 +55,10 @@ not record our changes. Put fork-relevant notes here instead.
   the process), plus a `command-result: succeeded | failed` output set even
   when the command fails (upstream sets no outputs at all then). Nothing in
   json mode can be stripped by GitHub's masked-value rule, and `fromJSON`
-  yields real objects instead of double-encoded strings.
+  yields real objects instead of double-encoded strings. `json-with-secrets`
+  is `json` with decrypted secret values in the aggregate (masked in logs;
+  same-job consumption only, since GitHub strips job outputs that contain
+  masked values).
 
 ## `dist/` must be committed with your change
 

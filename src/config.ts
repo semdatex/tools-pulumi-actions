@@ -97,7 +97,7 @@ export function makeConfig() {
       }) ?? 'nested',
     outputFormat:
       getUnionInput('output-format', {
-        alternatives: ['per-key', 'json'] as const,
+        alternatives: ['per-key', 'json', 'json-with-secrets'] as const,
       }) ?? 'per-key',
 
     options: {

@@ -21,6 +21,7 @@ import {
   buildStackOutputsJson,
   fetchOutputsWithoutDecrypting,
   publishStackOutputs,
+  registerSecretMasks,
 } from './libs/outputs';
 import { handlePullRequestMessage } from './libs/pr';
 import * as pulumiCli from './libs/pulumi-cli';
@@ -129,11 +130,11 @@ const runAction = async (config: Config): Promise<void> => {
     [stdout, stderr] = await actions[config.command]();
   } catch (err) {
     // Failure keeps upstream semantics (the rethrow lands in the top-level
-    // handler: setFailed, no stack outputs, no PR comment) — but in json
-    // mode the disposition is still published, so a workflow-level
+    // handler: setFailed, no stack outputs, no PR comment) — but the json
+    // formats still publish the disposition, so a workflow-level
     // `continue-on-error: true` step can distinguish a failed command from
     // an infrastructure error.
-    if (config.outputFormat === 'json') {
+    if (config.outputFormat !== 'per-key') {
       core.setOutput('command-result', 'failed');
     }
     throw err;
@@ -149,35 +150,44 @@ const runAction = async (config: Config): Promise<void> => {
 
   core.setOutput('output', stdout);
 
-  if (config.outputFormat === 'json') {
-    // json mode publishes no per-key outputs and the aggregate never carries
-    // a secret value, so no secret is ever decrypted: the Automation API's
-    // outputs()/stackOutputs() always run `--show-secrets`, while the raw
-    // CLI without it never lets plaintext secrets enter the process.
-    const outputs = await fetchOutputsWithoutDecrypting(
-      workDir,
-      config.stackName,
-    );
-    core.setOutput('stack-outputs', buildStackOutputsJson(outputs));
-    core.setOutput('command-result', 'succeeded');
-  } else {
-    let outputs: OutputMap;
+  const fetchDecryptedOutputs = async (): Promise<OutputMap> => {
     if (config.command === "output") {
       // When the command is `output` we didn't initialize `stack`, because we
       // wanted to avoid the underlying call to `pulumi stack select`, which
       // requires a Pulumi.yaml file to be present. Instead, we can use the
       // `LocalWorkspace.stackOutputs()` to get the stack's outputs.
       const ws = await LocalWorkspace.create({ ...wsOpts, workDir });
-      outputs = await ws.stackOutputs(config.stackName);
-    } else {
-      // When the command is not `output`, we already have a `stack` instance
-      // initialized, so `stack.outputs()` can be used to get the stack's outputs.
-      outputs = await stack.outputs();
+      return ws.stackOutputs(config.stackName);
     }
+    // When the command is not `output`, we already have a `stack` instance
+    // initialized, so `stack.outputs()` can be used to get the stack's outputs.
+    return stack.outputs();
+  };
 
-    publishStackOutputs(outputs, {
+  if (config.outputFormat === 'per-key') {
+    publishStackOutputs(await fetchDecryptedOutputs(), {
       secretMasking: config.secretMasking,
     });
+  } else {
+    // The json formats publish no per-key outputs.
+    let outputs: OutputMap;
+    if (config.outputFormat === 'json') {
+      // The aggregate never carries a secret value, so no secret is ever
+      // decrypted: the Automation API's outputs()/stackOutputs() always run
+      // `--show-secrets`, while the raw CLI without it never lets plaintext
+      // secrets enter the process.
+      outputs = await fetchOutputsWithoutDecrypting(workDir, config.stackName);
+    } else {
+      // json-with-secrets carries decrypted values, so masks must be
+      // registered before the aggregate is written anywhere.
+      outputs = await fetchDecryptedOutputs();
+      registerSecretMasks(outputs, config.secretMasking);
+    }
+    core.setOutput(
+      'stack-outputs',
+      buildStackOutputsJson(outputs, config.outputFormat === 'json-with-secrets'),
+    );
+    core.setOutput('command-result', 'succeeded');
   }
 
   // Only comment on the pull request if the command is not `output`.

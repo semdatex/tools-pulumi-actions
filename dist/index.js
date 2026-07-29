@@ -142419,7 +142419,7 @@ function makeConfig() {
             alternatives: ['nested', 'exact'],
         }) ?? 'nested',
         outputFormat: getUnionInput('output-format', {
-            alternatives: ['per-key', 'json'],
+            alternatives: ['per-key', 'json', 'json-with-secrets'],
         }) ?? 'per-key',
         options: {
             parallel: getNumberInput('parallel', {}),
@@ -143683,17 +143683,11 @@ function maskLeaves(value, root) {
     }
 }
 /**
- * Publishes every stack output as a step output of the action, registering
- * log masks for the values Pulumi marks as secret.
- *
- * All masks are registered before the first value is written, so nothing
- * emitted afterwards can leak a value that was about to be masked. What lands
- * in GITHUB_OUTPUT is identical in both masking modes — masks only affect log
- * rendering (and GitHub's stripping of job outputs that contain masked
- * values).
+ * Registers log masks for every value Pulumi marks as secret, without
+ * writing anything to GITHUB_OUTPUT. Masks only affect log rendering (and
+ * GitHub's stripping of job outputs that contain masked values).
  */
-function publishStackOutputs(outputs, options) {
-    const masking = options?.secretMasking ?? 'nested';
+function registerSecretMasks(outputs, masking = 'nested') {
     for (const outExport of Object.values(outputs)) {
         if (!outExport.secret || outExport.value === undefined) {
             continue;
@@ -143704,24 +143698,37 @@ function publishStackOutputs(outputs, options) {
             maskLeaves(outExport.value, true);
         }
     }
+}
+/**
+ * Publishes every stack output as a step output of the action, registering
+ * log masks for the values Pulumi marks as secret.
+ *
+ * All masks are registered before the first value is written, so nothing
+ * emitted afterwards can leak a value that was about to be masked. What lands
+ * in GITHUB_OUTPUT is identical in both masking modes.
+ */
+function publishStackOutputs(outputs, options) {
+    registerSecretMasks(outputs, options?.secretMasking ?? 'nested');
     for (const [outKey, outExport] of Object.entries(outputs)) {
         setOutput(outKey, outExport.value);
     }
 }
 /**
  * Serializes an OutputMap into the aggregate `stack-outputs` JSON:
- * `{name: {value, secret: false} | {secret: true}}`. Secret entries are
- * always listed without their value, so consumers can detect presence
- * without the aggregate ever containing secret material.
+ * `{name: {value, secret: false} | {secret: true}}`. Unless `includeSecrets`
+ * is set, secret entries are listed without their value, so consumers can
+ * detect presence without the aggregate ever containing secret material.
+ * With `includeSecrets`, secret entries carry their decrypted value — the
+ * caller must have registered log masks first.
  */
-function buildStackOutputsJson(outputs) {
+function buildStackOutputsJson(outputs, includeSecrets = false) {
     const aggregate = {};
     for (const [key, outExport] of Object.entries(outputs)) {
-        if (outExport.secret) {
+        if (outExport.secret && !includeSecrets) {
             aggregate[key] = { secret: true };
         }
         else {
-            aggregate[key] = { value: outExport.value, secret: false };
+            aggregate[key] = { value: outExport.value, secret: outExport.secret };
         }
     }
     return JSON.stringify(aggregate);
@@ -144120,11 +144127,11 @@ const runAction = async (config) => {
     }
     catch (err) {
         // Failure keeps upstream semantics (the rethrow lands in the top-level
-        // handler: setFailed, no stack outputs, no PR comment) — but in json
-        // mode the disposition is still published, so a workflow-level
+        // handler: setFailed, no stack outputs, no PR comment) — but the json
+        // formats still publish the disposition, so a workflow-level
         // `continue-on-error: true` step can distinguish a failed command from
         // an infrastructure error.
-        if (config.outputFormat === 'json') {
+        if (config.outputFormat !== 'per-key') {
             setOutput('command-result', 'failed');
         }
         throw err;
@@ -144139,33 +144146,42 @@ const runAction = async (config) => {
         }
     }
     setOutput('output', stdout);
-    if (config.outputFormat === 'json') {
-        // json mode publishes no per-key outputs and the aggregate never carries
-        // a secret value, so no secret is ever decrypted: the Automation API's
-        // outputs()/stackOutputs() always run `--show-secrets`, while the raw
-        // CLI without it never lets plaintext secrets enter the process.
-        const outputs = await fetchOutputsWithoutDecrypting(workDir, config.stackName);
-        setOutput('stack-outputs', buildStackOutputsJson(outputs));
-        setOutput('command-result', 'succeeded');
-    }
-    else {
-        let outputs;
+    const fetchDecryptedOutputs = async () => {
         if (config.command === "output") {
             // When the command is `output` we didn't initialize `stack`, because we
             // wanted to avoid the underlying call to `pulumi stack select`, which
             // requires a Pulumi.yaml file to be present. Instead, we can use the
             // `LocalWorkspace.stackOutputs()` to get the stack's outputs.
             const ws = await automation.LocalWorkspace.create({ ...wsOpts, workDir });
-            outputs = await ws.stackOutputs(config.stackName);
+            return ws.stackOutputs(config.stackName);
         }
-        else {
-            // When the command is not `output`, we already have a `stack` instance
-            // initialized, so `stack.outputs()` can be used to get the stack's outputs.
-            outputs = await stack.outputs();
-        }
-        publishStackOutputs(outputs, {
+        // When the command is not `output`, we already have a `stack` instance
+        // initialized, so `stack.outputs()` can be used to get the stack's outputs.
+        return stack.outputs();
+    };
+    if (config.outputFormat === 'per-key') {
+        publishStackOutputs(await fetchDecryptedOutputs(), {
             secretMasking: config.secretMasking,
         });
+    }
+    else {
+        // The json formats publish no per-key outputs.
+        let outputs;
+        if (config.outputFormat === 'json') {
+            // The aggregate never carries a secret value, so no secret is ever
+            // decrypted: the Automation API's outputs()/stackOutputs() always run
+            // `--show-secrets`, while the raw CLI without it never lets plaintext
+            // secrets enter the process.
+            outputs = await fetchOutputsWithoutDecrypting(workDir, config.stackName);
+        }
+        else {
+            // json-with-secrets carries decrypted values, so masks must be
+            // registered before the aggregate is written anywhere.
+            outputs = await fetchDecryptedOutputs();
+            registerSecretMasks(outputs, config.secretMasking);
+        }
+        setOutput('stack-outputs', buildStackOutputsJson(outputs, config.outputFormat === 'json-with-secrets'));
+        setOutput('command-result', 'succeeded');
     }
     // Only comment on the pull request if the command is not `output`.
     if (config.command !== "output") {
