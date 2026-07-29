@@ -95,11 +95,10 @@ export function makeConfig() {
       getUnionInput('secret-masking', {
         alternatives: ['nested', 'exact'] as const,
       }) ?? 'nested',
-    stackOutputs:
-      getUnionInput('stack-outputs', {
-        alternatives: ['off', 'exclude-secrets', 'plaintext-secrets'] as const,
-      }) ?? 'off',
-    suppressSecretOutputs: getBooleanInput('suppress-secret-outputs'),
+    outputFormat:
+      getUnionInput('output-format', {
+        alternatives: ['per-key', 'json'] as const,
+      }) ?? 'per-key',
 
     options: {
       parallel: getNumberInput('parallel', {}),

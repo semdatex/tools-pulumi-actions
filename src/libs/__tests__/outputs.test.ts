@@ -177,47 +177,14 @@ describe('publishStackOutputs', () => {
     });
   });
 
-  describe('suppressSecretOutputs', () => {
-    it('skips per-key outputs for secret entries only', () => {
-      publishStackOutputs(
-        {
-          plain: { value: 'hello', secret: false },
-          password: { value: 'hunter22', secret: true },
-        },
-        { suppressSecretOutputs: true },
-      );
-      expect(setOutput).toHaveBeenCalledTimes(1);
-      expect(setOutput).toHaveBeenCalledWith('plain', 'hello');
-    });
-
-    it('still registers masks for suppressed secret values', () => {
-      publishStackOutputs(
-        { password: { value: 'hunter22', secret: true } },
-        { suppressSecretOutputs: true },
-      );
-      expect(setSecret).toHaveBeenCalledWith('hunter22');
-    });
-
-    it('does not mask value-less secret entries from the no-decrypt path', () => {
-      publishStackOutputs(
-        { password: { value: undefined, secret: true } },
-        { suppressSecretOutputs: true },
-      );
-      expect(setSecret).not.toHaveBeenCalled();
-      expect(setOutput).not.toHaveBeenCalled();
-    });
-  });
 });
 
 describe('buildStackOutputsJson', () => {
-  it('lists secret entries without their value in exclude-secrets mode', () => {
-    const json = buildStackOutputsJson(
-      {
-        plain: { value: 'hello', secret: false },
-        password: { value: 'hunter22', secret: true },
-      },
-      'exclude-secrets',
-    );
+  it('always lists secret entries without their value', () => {
+    const json = buildStackOutputsJson({
+      plain: { value: 'hello', secret: false },
+      password: { value: 'hunter22', secret: true },
+    });
     expect(JSON.parse(json)).toEqual({
       plain: { value: 'hello', secret: false },
       password: { secret: true },
@@ -225,27 +192,16 @@ describe('buildStackOutputsJson', () => {
     expect(json).not.toContain('hunter22');
   });
 
-  it('includes decrypted secret values in plaintext-secrets mode', () => {
-    const json = buildStackOutputsJson(
-      { password: { value: 'hunter22', secret: true } },
-      'plaintext-secrets',
-    );
-    expect(JSON.parse(json)).toEqual({
-      password: { value: 'hunter22', secret: true },
-    });
-  });
-
   it('keeps structured non-secret values intact', () => {
     const connection = { host: 'db.example.com', port: 5432 };
-    const json = buildStackOutputsJson(
-      { connection: { value: connection, secret: false } },
-      'exclude-secrets',
-    );
+    const json = buildStackOutputsJson({
+      connection: { value: connection, secret: false },
+    });
     expect(JSON.parse(json).connection.value).toEqual(connection);
   });
 
   it('serializes an empty map to an empty object', () => {
-    expect(buildStackOutputsJson({}, 'exclude-secrets')).toEqual('{}');
+    expect(buildStackOutputsJson({})).toEqual('{}');
   });
 });
 

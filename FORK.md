@@ -47,14 +47,15 @@ not record our changes. Put fork-relevant notes here instead.
   (boolean and very short leaves are skipped to avoid corrupting logs). New
   input `secret-masking: nested` (default) | `exact` (bit-for-bit upstream
   masking). GITHUB_OUTPUT contents are unchanged in both modes.
-- **Declared `stack-outputs` aggregate output (opt-in)** — one JSON object
-  `{name: {value, secret}}`, published only when the `stack-outputs` input is
-  set to `exclude-secrets` (secret values omitted) or `plaintext-secrets`.
-  The default `off` sets no aggregate, so outputs are byte-identical to
-  upstream. `suppress-secret-outputs` additionally skips per-key step outputs
-  for secrets; unless plaintext is requested the action then fetches outputs
-  via the CLI without `--show-secrets`, so plaintext secrets never enter the
-  process.
+- **`output-format` input** — `per-key` (default) keeps upstream's contract:
+  one step output per stack output, byte-identical behavior. `json` publishes
+  no per-key outputs; instead a single declared `stack-outputs` output
+  `{name: {value, secret}}` with secret values omitted and never decrypted
+  (the CLI runs without `--show-secrets`, so plaintext secrets never enter
+  the process), plus a `command-result: succeeded | failed` output set even
+  when the command fails (upstream sets no outputs at all then). Nothing in
+  json mode can be stripped by GitHub's masked-value rule, and `fromJSON`
+  yields real objects instead of double-encoded strings.
 
 ## `dist/` must be committed with your change
 

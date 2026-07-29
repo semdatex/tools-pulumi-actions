@@ -122,7 +122,6 @@ jobs:
           stack-name: dev
           work-dir: .github/test-stacks/yaml
           suppress-progress: true
-          stack-outputs: exclude-secrets
       - name: Get Outputs (exact legacy masking)
         uses: ./
         if: always()
@@ -145,37 +144,77 @@ jobs:
           SECRET_UP: ${{ steps.pulumi.outputs.secretValue }}
           SECRET_OUTPUT: ${{ steps.pulumioutput.outputs.secretValue }}
           STRUCTURED: ${{ steps.pulumi.outputs.structuredSecret }}
-      - name: Assert the aggregate is off by default and excludes secret values when enabled
+      - name: Assert the json-mode outputs are absent in the default per-key format
         run: |
-          [[ -z "$AGGREGATE_DEFAULT" ]] || { echo "stack-outputs must not be set with default inputs"; exit 1; }
-          jq -e '.plain.value == "hello" and .plain.secret == false' <<<"$AGGREGATE" >/dev/null || { echo "plain entry wrong"; exit 1; }
-          jq -e '.secretValue.secret == true and (.secretValue | has("value") | not)' <<<"$AGGREGATE" >/dev/null || { echo "secret entry not excluded"; exit 1; }
-          jq -e '.structuredSecret.secret == true and (.structuredSecret | has("value") | not)' <<<"$AGGREGATE" >/dev/null || { echo "structured secret entry not excluded"; exit 1; }
-          grep -vq 'hush-hush-1234' <<<"$AGGREGATE" || { echo "aggregate leaked a secret value"; exit 1; }
+          [[ -z "$AGGREGATE_DEFAULT" ]] || { echo "stack-outputs must not be set with output-format: per-key"; exit 1; }
+          [[ -z "$COMMAND_RESULT_DEFAULT" ]] || { echo "command-result must not be set with output-format: per-key"; exit 1; }
         env:
           AGGREGATE_DEFAULT: ${{ steps.pulumioutput.outputs['stack-outputs'] }}
-          AGGREGATE: ${{ steps.pulumi.outputs['stack-outputs'] }}
-      - name: Get Outputs without decrypting (suppress-secret-outputs)
+          COMMAND_RESULT_DEFAULT: ${{ steps.pulumioutput.outputs.command-result }}
+      - name: Get Outputs (output-format json)
         uses: ./
         if: always()
-        id: pulumisuppressed
+        id: pulumijson
         env:
           PULUMI_CONFIG_PASSPHRASE: not-a-secret
         with:
           command: output
           cloud-url: file://~
           stack-name: organization/yamltest/dev
-          suppress-secret-outputs: true
-          stack-outputs: exclude-secrets
-      - name: Assert suppression skips per-key secrets but keeps the aggregate
+          output-format: json
+      - name: Assert json mode publishes the aggregate and disposition, never secrets or per-key outputs
         run: |
-          [[ -z "$SECRET_PER_KEY" ]] || { echo "per-key secret output was not suppressed"; exit 1; }
-          [[ "$PLAIN" == "hello" ]] || { echo "non-secret output must be unaffected by suppression"; exit 1; }
-          jq -e '.secretValue.secret == true and (.secretValue | has("value") | not)' <<<"$AGGREGATE" >/dev/null || { echo "aggregate lost the secret marker"; exit 1; }
+          [[ -z "$PER_KEY_PLAIN" ]] || { echo "per-key outputs must not be set in json mode"; exit 1; }
+          [[ -z "$PER_KEY_SECRET" ]] || { echo "per-key secret output must not be set in json mode"; exit 1; }
+          [[ "$COMMAND_RESULT" == "succeeded" ]] || { echo "command-result not 'succeeded': '$COMMAND_RESULT'"; exit 1; }
+          jq -e '.plain.value == "hello" and .plain.secret == false' <<<"$AGGREGATE" >/dev/null || { echo "plain entry wrong"; exit 1; }
+          jq -e '.secretValue.secret == true and (.secretValue | has("value") | not)' <<<"$AGGREGATE" >/dev/null || { echo "secret entry not excluded"; exit 1; }
+          jq -e '.structuredSecret.secret == true and (.structuredSecret | has("value") | not)' <<<"$AGGREGATE" >/dev/null || { echo "structured secret entry not excluded"; exit 1; }
+          grep -vq 'hush-hush-1234' <<<"$AGGREGATE" || { echo "aggregate leaked a secret value"; exit 1; }
+          grep -vq 'fixture-password-9876' <<<"$AGGREGATE" || { echo "aggregate leaked a structured secret leaf"; exit 1; }
         env:
-          SECRET_PER_KEY: ${{ steps.pulumisuppressed.outputs.secretValue }}
-          PLAIN: ${{ steps.pulumisuppressed.outputs.plain }}
-          AGGREGATE: ${{ steps.pulumisuppressed.outputs['stack-outputs'] }}
+          PER_KEY_PLAIN: ${{ steps.pulumijson.outputs.plain }}
+          PER_KEY_SECRET: ${{ steps.pulumijson.outputs.secretValue }}
+          COMMAND_RESULT: ${{ steps.pulumijson.outputs.command-result }}
+          AGGREGATE: ${{ steps.pulumijson.outputs['stack-outputs'] }}
+  test-json-disposition: # command-result must be published even when the command fails
+    name: JSON Disposition on Failure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          pulumi login --local
+          pulumi stack init dev
+        working-directory: .github/test-stacks/yaml
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: 'package.json'
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: yarn build
+      - name: Preview expected to fail (fresh stack + expect-no-changes)
+        uses: ./
+        id: previewfail
+        continue-on-error: true
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+        with:
+          command: preview
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/yaml
+          expect-no-changes: true
+          output-format: json
+          suppress-progress: true
+      - name: Assert the failed preview still published the disposition
+        run: |
+          [[ "$OUTCOME" == "failure" ]] || { echo "expected the preview step to fail, got $OUTCOME"; exit 1; }
+          [[ "$COMMAND_RESULT" == "failed" ]] || { echo "command-result not set on failure: '$COMMAND_RESULT'"; exit 1; }
+        env:
+          OUTCOME: ${{ steps.previewfail.outcome }}
+          COMMAND_RESULT: ${{ steps.previewfail.outputs.command-result }}
   test-update-plan: # make sure the action works on a clean machine without building
     name: Action Update Plan
     runs-on: ubuntu-latest

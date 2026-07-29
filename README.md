@@ -161,16 +161,12 @@ The action can be configured with the following arguments:
   `nested` (default) also masks every string and number leaf inside structured
   secret outputs; `exact` masks only the exact serialized value.
 
-- `stack-outputs` - (optional) Publish the aggregate `stack-outputs` output.
-  `off` (default) does not set it, keeping the action's outputs identical to
-  upstream. `exclude-secrets` lists secret entries without their value;
-  `plaintext-secrets` includes decrypted values (masked in logs).
-
-- `suppress-secret-outputs` - (optional) If `true`, secret stack outputs are
-  not set as individual step outputs; non-secret outputs are unaffected.
-  Unless `stack-outputs` is `plaintext-secrets`, this means the action never
-  decrypts secret outputs at all. Unlike `suppress-outputs`, which only
-  affects CLI display.
+- `output-format` - (optional) How stack outputs are published as step
+  outputs. `per-key` (default): one step output per stack output, exactly
+  like upstream. `json`: no per-key outputs; instead a single `stack-outputs`
+  output — a JSON object `{name: {value, secret}}` in which secret values are
+  omitted and **never decrypted** — plus a `command-result` output
+  (`succeeded` | `failed`) that is set even when the action fails.
 
 - `plan` - (optional) Used for
   [update plans](https://www.pulumi.com/docs/concepts/update-plans/)
@@ -244,13 +240,18 @@ action, we would use code similar to the following:
 - run: echo "My pet name is ${{ steps.pulumi.outputs.pet-name }}"
 ```
 
-With `stack-outputs: exclude-secrets` (or `plaintext-secrets`), every stack
-output is additionally collected into one declared `stack-outputs` output:
-a JSON object of the shape `{"name": {"value": ..., "secret": false}, "db-password": {"secret": true}}`.
-Unlike `toJSON(steps.pulumi.outputs)` it contains neither the command log nor —
-with `exclude-secrets` — any secret value, so it is safe to pass across jobs
-(GitHub strips job outputs that contain masked values) and `fromJSON(...)`
-yields real objects instead of double-encoded strings:
+With `output-format: json`, per-key outputs are replaced by one declared
+`stack-outputs` output: a JSON object of the shape
+`{"name": {"value": ..., "secret": false}, "db-password": {"secret": true}}`.
+Secret values are omitted and never decrypted — the action reads outputs via
+`pulumi stack output --json` without `--show-secrets`, so plaintext secrets
+never even enter the process. Unlike `toJSON(steps.pulumi.outputs)` the
+aggregate contains neither the command log nor any secret value, so it is
+safe to pass across jobs (GitHub strips job outputs that contain masked
+values) and `fromJSON(...)` yields real objects instead of double-encoded
+strings. json mode also sets `command-result` (`succeeded` | `failed`), even
+when the action fails — combine it with a step-level
+`continue-on-error: true` to post-process a command that is expected to fail:
 
 ```yaml
 jobs:
@@ -261,7 +262,7 @@ jobs:
         with:
           command: up
           stack-name: dev
-          stack-outputs: exclude-secrets
+          output-format: json
     outputs:
       stack-outputs: ${{ steps.pulumi.outputs['stack-outputs'] }}
   downstream:
@@ -269,8 +270,8 @@ jobs:
     if: fromJSON(needs.deploy.outputs.stack-outputs || '{}').pet-name != null
 ```
 
-With the default `stack-outputs: off` the aggregate output is not set at all,
-so the action's outputs are identical to upstream.
+With the default `output-format: per-key` the action's outputs are identical
+to upstream.
 
 the `pet-name` is available as a named output
 

@@ -142418,10 +142418,9 @@ function makeConfig() {
         secretMasking: getUnionInput('secret-masking', {
             alternatives: ['nested', 'exact'],
         }) ?? 'nested',
-        stackOutputs: getUnionInput('stack-outputs', {
-            alternatives: ['off', 'exclude-secrets', 'plaintext-secrets'],
-        }) ?? 'off',
-        suppressSecretOutputs: inputs_getBooleanInput('suppress-secret-outputs'),
+        outputFormat: getUnionInput('output-format', {
+            alternatives: ['per-key', 'json'],
+        }) ?? 'per-key',
         options: {
             parallel: getNumberInput('parallel', {}),
             message: inputs_getInput('message'),
@@ -143706,26 +143705,23 @@ function publishStackOutputs(outputs, options) {
         }
     }
     for (const [outKey, outExport] of Object.entries(outputs)) {
-        if (options?.suppressSecretOutputs && outExport.secret) {
-            continue;
-        }
         setOutput(outKey, outExport.value);
     }
 }
 /**
  * Serializes an OutputMap into the aggregate `stack-outputs` JSON:
- * `{name: {value, secret: false} | {secret: true}}`. With `exclude-secrets`
- * secret entries are listed without their value, so consumers can detect
- * presence without the aggregate ever containing secret material.
+ * `{name: {value, secret: false} | {secret: true}}`. Secret entries are
+ * always listed without their value, so consumers can detect presence
+ * without the aggregate ever containing secret material.
  */
-function buildStackOutputsJson(outputs, mode) {
+function buildStackOutputsJson(outputs) {
     const aggregate = {};
     for (const [key, outExport] of Object.entries(outputs)) {
-        if (outExport.secret && mode === 'exclude-secrets') {
+        if (outExport.secret) {
             aggregate[key] = { secret: true };
         }
         else {
-            aggregate[key] = { value: outExport.value, secret: outExport.secret };
+            aggregate[key] = { value: outExport.value, secret: false };
         }
     }
     return JSON.stringify(aggregate);
@@ -144117,7 +144113,22 @@ const runAction = async (config) => {
         output: () => Promise.resolve(['', '']) //do nothing, outputs are fetched anyway afterwards
     };
     core_debug(`Running action ${config.command}`);
-    const [stdout, stderr] = await actions[config.command]();
+    let stdout;
+    let stderr;
+    try {
+        [stdout, stderr] = await actions[config.command]();
+    }
+    catch (err) {
+        // Failure keeps upstream semantics (the rethrow lands in the top-level
+        // handler: setFailed, no stack outputs, no PR comment) — but in json
+        // mode the disposition is still published, so a workflow-level
+        // `continue-on-error: true` step can distinguish a failed command from
+        // an infrastructure error.
+        if (config.outputFormat === 'json') {
+            setOutput('command-result', 'failed');
+        }
+        throw err;
+    }
     core_debug(`Done running action ${config.command}`);
     if (stderr !== '') {
         if (config.options.logToStdErr) {
@@ -144128,42 +144139,33 @@ const runAction = async (config) => {
         }
     }
     setOutput('output', stdout);
-    let outputs;
-    if (config.suppressSecretOutputs &&
-        config.stackOutputs !== 'plaintext-secrets') {
-        // Nothing the action publishes will contain a secret value, so don't
-        // decrypt any: the Automation API's outputs()/stackOutputs() always run
-        // `--show-secrets`, while the raw CLI without it never lets plaintext
-        // secrets enter the process.
-        outputs = await fetchOutputsWithoutDecrypting(workDir, config.stackName);
-    }
-    else if (config.command === "output") {
-        // When the command is `output` we didn't initialize `stack`, because we
-        // wanted to avoid the underlying call to `pulumi stack select`, which
-        // requires a Pulumi.yaml file to be present. Instead, we can use the
-        // `LocalWorkspace.stackOutputs()` to get the stack's outputs.
-        const ws = await automation.LocalWorkspace.create({ ...wsOpts, workDir });
-        outputs = await ws.stackOutputs(config.stackName);
+    if (config.outputFormat === 'json') {
+        // json mode publishes no per-key outputs and the aggregate never carries
+        // a secret value, so no secret is ever decrypted: the Automation API's
+        // outputs()/stackOutputs() always run `--show-secrets`, while the raw
+        // CLI without it never lets plaintext secrets enter the process.
+        const outputs = await fetchOutputsWithoutDecrypting(workDir, config.stackName);
+        setOutput('stack-outputs', buildStackOutputsJson(outputs));
+        setOutput('command-result', 'succeeded');
     }
     else {
-        // When the command is not `output`, we already have a `stack` instance
-        // initialized, so `stack.outputs()` can be used to get the stack's outputs.
-        outputs = await stack.outputs();
-    }
-    publishStackOutputs(outputs, {
-        secretMasking: config.secretMasking,
-        suppressSecretOutputs: config.suppressSecretOutputs,
-    });
-    // Off by default so the action's outputs are byte-identical to upstream
-    // unless the aggregate is explicitly requested. When enabled it is set
-    // after the per-key loop so the declared aggregate wins a collision with a
-    // stack output of the same name (unlike `output`, which a stack output can
-    // shadow because it is set before the loop).
-    if (config.stackOutputs !== 'off') {
-        if (Object.prototype.hasOwnProperty.call(outputs, 'stack-outputs')) {
-            warning("The stack output named 'stack-outputs' is shadowed by the action's aggregate stack-outputs output.");
+        let outputs;
+        if (config.command === "output") {
+            // When the command is `output` we didn't initialize `stack`, because we
+            // wanted to avoid the underlying call to `pulumi stack select`, which
+            // requires a Pulumi.yaml file to be present. Instead, we can use the
+            // `LocalWorkspace.stackOutputs()` to get the stack's outputs.
+            const ws = await automation.LocalWorkspace.create({ ...wsOpts, workDir });
+            outputs = await ws.stackOutputs(config.stackName);
         }
-        setOutput('stack-outputs', buildStackOutputsJson(outputs, config.stackOutputs));
+        else {
+            // When the command is not `output`, we already have a `stack` instance
+            // initialized, so `stack.outputs()` can be used to get the stack's outputs.
+            outputs = await stack.outputs();
+        }
+        publishStackOutputs(outputs, {
+            secretMasking: config.secretMasking,
+        });
     }
     // Only comment on the pull request if the command is not `output`.
     if (config.command !== "output") {

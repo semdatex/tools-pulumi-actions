@@ -14,28 +14,8 @@ import * as pulumiCli from './pulumi-cli';
  */
 export type SecretMasking = 'nested' | 'exact';
 
-/**
- * Whether and how the aggregate `stack-outputs` output is published.
- *
- * - `off`: the aggregate output is not set at all — what the action writes
- *   to GITHUB_OUTPUT is identical to upstream.
- * - `exclude-secrets`: secret entries are listed with `secret: true` but
- *   carry no value — the aggregate is safe to pass across jobs (nothing in
- *   it can be redacted or stripped).
- * - `plaintext-secrets`: secret entries carry their decrypted value (masked
- *   in logs).
- */
-export type StackOutputsMode = 'off' | 'exclude-secrets' | 'plaintext-secrets';
-
 export interface PublishOptions {
   readonly secretMasking?: SecretMasking;
-  /**
-   * When true, secret stack outputs are not set as individual step outputs.
-   * Non-secret outputs are unaffected. Unlike `suppress-outputs`, which only
-   * affects CLI display, this governs what the action writes to
-   * GITHUB_OUTPUT.
-   */
-  readonly suppressSecretOutputs?: boolean;
 }
 
 // Leaves whose string form is shorter than this are not masked: a registered
@@ -128,29 +108,23 @@ export function publishStackOutputs(
   }
 
   for (const [outKey, outExport] of Object.entries(outputs)) {
-    if (options?.suppressSecretOutputs && outExport.secret) {
-      continue;
-    }
     core.setOutput(outKey, outExport.value);
   }
 }
 
 /**
  * Serializes an OutputMap into the aggregate `stack-outputs` JSON:
- * `{name: {value, secret: false} | {secret: true}}`. With `exclude-secrets`
- * secret entries are listed without their value, so consumers can detect
- * presence without the aggregate ever containing secret material.
+ * `{name: {value, secret: false} | {secret: true}}`. Secret entries are
+ * always listed without their value, so consumers can detect presence
+ * without the aggregate ever containing secret material.
  */
-export function buildStackOutputsJson(
-  outputs: OutputMap,
-  mode: Exclude<StackOutputsMode, 'off'>,
-): string {
+export function buildStackOutputsJson(outputs: OutputMap): string {
   const aggregate: Record<string, { value?: unknown; secret: boolean }> = {};
   for (const [key, outExport] of Object.entries(outputs)) {
-    if (outExport.secret && mode === 'exclude-secrets') {
+    if (outExport.secret) {
       aggregate[key] = { secret: true };
     } else {
-      aggregate[key] = { value: outExport.value, secret: outExport.secret };
+      aggregate[key] = { value: outExport.value, secret: false };
     }
   }
   return JSON.stringify(aggregate);
