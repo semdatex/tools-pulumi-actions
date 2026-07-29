@@ -122,7 +122,7 @@ inputs:
     required: false
     default: 'nested'
   output-format:
-    description: 'How stack outputs are published as step outputs. per-key (default): one step output per stack output, exactly like upstream. json: no per-key outputs; instead one stack-outputs output, a JSON object {name: {value, secret}} in which secret values are omitted and never decrypted, plus a resource-changes output listing the resources the command changed or planned to change. json-with-secrets: like json, but secret entries carry their decrypted value (masked in logs; GitHub strips job outputs containing masked values, so consume it within the same job).'
+    description: 'How stack outputs are published as step outputs. per-key (default): one step output per stack output, exactly like upstream. json: no per-key outputs; instead one stack-outputs output, a JSON object {name: {value, secret}} in which secret values are omitted and never decrypted. json-with-secrets: like json, but secret entries carry their decrypted value (masked in logs; GitHub strips job outputs containing masked values, so consume it within the same job).'
     required: false
     default: 'per-key'
   always-include-summary:
@@ -149,8 +149,6 @@ outputs:
     description: Output from running command
   stack-outputs:
     description: 'JSON object of stack outputs, `{name: {value, secret}}`. Only set with the json output formats; secret values are omitted unless the format is json-with-secrets.'
-  resource-changes:
-    description: 'JSON array [{op, urn, type}] of the resources the command changed (up/refresh/destroy) or planned to change (preview), excluding unchanged (same) and read steps. Only set with the json output formats. When the action fails it is still set, best-effort, from the events received before the error.'
 runs:
   using: 'node24'
   main: 'dist/index.js'

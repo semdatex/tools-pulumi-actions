@@ -142451,36 +142451,6 @@ function makeConfig() {
     };
 }
 
-;// CONCATENATED MODULE: ./src/libs/changes.ts
-/**
- * Collects resource-level changes from engine events, in memory. A change is
- * any step whose operation is not `same` (unchanged) or `read` (data-source
- * read): creates, updates, deletes, replacements, imports, refreshes.
- *
- * During an update both resourcePreEvent (step scheduled) and
- * resOutputsEvent (step done) fire for the same step; during a preview only
- * the pre event does. Steps are keyed by urn+op so each change is reported
- * once, in event order. resOpFailedEvent metadata is collected too, so a
- * failed command still reports the step it died on.
- */
-function createChangeCollector() {
-    const changes = new Map();
-    const onEvent = (event) => {
-        const metadata = event.resourcePreEvent?.metadata ??
-            event.resOutputsEvent?.metadata ??
-            event.resOpFailedEvent?.metadata;
-        if (!metadata || metadata.op === 'same' || metadata.op === 'read') {
-            return;
-        }
-        changes.set(`${metadata.urn}|${metadata.op}`, {
-            op: metadata.op,
-            urn: metadata.urn,
-            type: metadata.type,
-        });
-    };
-    return { onEvent, toJson: () => JSON.stringify([...changes.values()]) };
-}
-
 // EXTERNAL MODULE: ./node_modules/envalid/dist/index.js
 var envalid_dist = __nccwpck_require__(8855);
 ;// CONCATENATED MODULE: ./src/libs/envs.ts
@@ -144075,7 +144045,6 @@ const login = async (workDir, cloudUrl) => {
 
 
 
-
 const main = async () => {
     const downloadConfig = makeInstallationConfig();
     if (downloadConfig.success) {
@@ -144136,28 +144105,14 @@ const runAction = async (config) => {
         await stack.setAllConfig(config.configMap);
     }
     startGroup(`pulumi ${config.command} on ${config.stackName}`);
-    // Collects {op, urn, type} per changed resource for the json formats'
-    // resource-changes output. Harmless otherwise: with onEvent set the
-    // Automation API tails its own temp event log, nothing user-visible.
-    const changeCollector = createChangeCollector();
-    const onEvent = changeCollector.onEvent;
     const actions = {
-        up: () => stack
-            .up({ onOutput, onEvent, ...config.options })
-            .then((r) => [r.stdout, r.stderr]),
-        update: () => stack
-            .up({ onOutput, onEvent, ...config.options })
-            .then((r) => [r.stdout, r.stderr]),
-        refresh: () => stack
-            .refresh({ onOutput, onEvent, ...config.options })
-            .then((r) => [r.stdout, r.stderr]),
-        destroy: () => stack
-            .destroy({ onOutput, onEvent, ...config.options })
-            .then((r) => [r.stdout, r.stderr]),
+        up: () => stack.up({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+        update: () => stack.up({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+        refresh: () => stack.refresh({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
+        destroy: () => stack.destroy({ onOutput, ...config.options }).then((r) => [r.stdout, r.stderr]),
         preview: async () => {
             const { stdout, stderr } = await stack.preview({
                 onOutput,
-                onEvent,
                 ...config.options
             });
             return [stdout, stderr];
@@ -144165,24 +144120,7 @@ const runAction = async (config) => {
         output: () => Promise.resolve(['', '']) //do nothing, outputs are fetched anyway afterwards
     };
     core_debug(`Running action ${config.command}`);
-    let stdout;
-    let stderr;
-    try {
-        [stdout, stderr] = await actions[config.command]();
-    }
-    catch (err) {
-        // Failure keeps upstream semantics (the rethrow lands in the top-level
-        // handler: setFailed, no stack outputs, no PR comment) — but the json
-        // formats still publish resource-changes, best-effort from the events
-        // received before the error, so a step carrying the GitHub Actions step
-        // property `continue-on-error: true` (unrelated to this action's
-        // same-named input, which is pulumi's --continue-on-error) can see what
-        // the command changed or planned to change before it failed.
-        if (config.outputFormat !== 'per-key') {
-            setOutput('resource-changes', changeCollector.toJson());
-        }
-        throw err;
-    }
+    const [stdout, stderr] = await actions[config.command]();
     core_debug(`Done running action ${config.command}`);
     if (stderr !== '') {
         if (config.options.logToStdErr) {
@@ -144228,8 +144166,6 @@ const runAction = async (config) => {
             registerSecretMasks(outputs, config.secretMasking);
         }
         setOutput('stack-outputs', buildStackOutputsJson(outputs, config.outputFormat === 'json-with-secrets'));
-        // Empty for command: output, which performs no engine operation.
-        setOutput('resource-changes', changeCollector.toJson());
     }
     // Only comment on the pull request if the command is not `output`.
     if (config.command !== "output") {
