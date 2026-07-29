@@ -166,7 +166,7 @@ jobs:
         run: |
           [[ -z "$PER_KEY_PLAIN" ]] || { echo "per-key outputs must not be set in json mode"; exit 1; }
           [[ -z "$PER_KEY_SECRET" ]] || { echo "per-key secret output must not be set in json mode"; exit 1; }
-          [[ "$RESOURCE_CHANGES" == "[]" ]] || { echo "command: output performs no operation, resource-changes must be []: '$RESOURCE_CHANGES'"; exit 1; }
+          [[ -z "$RESOURCE_CHANGES" ]] || { echo "resource-changes must not be set without the resource-changes flag: '$RESOURCE_CHANGES'"; exit 1; }
           jq -e '.plain.value == "hello" and .plain.secret == false' <<<"$AGGREGATE" >/dev/null || { echo "plain entry wrong"; exit 1; }
           jq -e '.secretValue.secret == true and (.secretValue | has("value") | not)' <<<"$AGGREGATE" >/dev/null || { echo "secret entry not excluded"; exit 1; }
           jq -e '.structuredSecret.secret == true and (.structuredSecret | has("value") | not)' <<<"$AGGREGATE" >/dev/null || { echo "structured secret entry not excluded"; exit 1; }
@@ -198,7 +198,7 @@ jobs:
         env:
           PER_KEY_SECRET: ${{ steps.pulumijsonsecrets.outputs.secretValue }}
           AGGREGATE: ${{ steps.pulumijsonsecrets.outputs['stack-outputs'] }}
-  test-resource-changes: # json formats must report which resources changed / were planned, even on failure
+  test-resource-changes: # the opt-in flag must report which resources changed / were planned, even on failure, and error on a per-key name collision
     name: Resource Changes Round-trip
     runs-on: ubuntu-latest
     steps:
@@ -231,6 +231,7 @@ jobs:
           work-dir: .github/test-stacks/yaml
           expect-no-changes: true
           output-format: json
+          resource-changes: true
           suppress-progress: true
       - name: Assert the failed preview still reported the planned changes
         run: |
@@ -239,7 +240,7 @@ jobs:
         env:
           OUTCOME: ${{ steps.previewfail.outcome }}
           RESOURCE_CHANGES: ${{ steps.previewfail.outputs.resource-changes }}
-      - name: Run Pulumi Up (json)
+      - name: Run Pulumi Up (json + resource-changes)
         uses: ./
         id: up
         env:
@@ -250,8 +251,9 @@ jobs:
           stack-name: dev
           work-dir: .github/test-stacks/yaml
           output-format: json
+          resource-changes: true
           suppress-progress: true
-      - name: Run Pulumi Up again (json, no pending changes)
+      - name: Run Pulumi Up again (per-key + resource-changes, no pending changes)
         uses: ./
         id: upnoop
         env:
@@ -261,16 +263,44 @@ jobs:
           cloud-url: file://~
           stack-name: dev
           work-dir: .github/test-stacks/yaml
-          output-format: json
+          resource-changes: true
           suppress-progress: true
-      - name: Assert changes are reported on the first up and empty on the no-op up
+      - name: Assert changes are reported on the first up and empty on the no-op per-key up
         run: |
           jq -e 'any(.[]; .op == "create" and (.urn | contains("pulumi:pulumi:Stack")))' <<<"$CHANGES_UP" >/dev/null || { echo "up did not report the stack create: '$CHANGES_UP'"; exit 1; }
           jq -e 'all(.[]; .op and .urn and .type)' <<<"$CHANGES_UP" >/dev/null || { echo "a change entry is missing op/urn/type: '$CHANGES_UP'"; exit 1; }
           [[ "$CHANGES_NOOP" == "[]" ]] || { echo "no-op up must report no changes: '$CHANGES_NOOP'"; exit 1; }
+          [[ "$PLAIN_NOOP" == "hello" ]] || { echo "per-key outputs must still be published alongside resource-changes: '$PLAIN_NOOP'"; exit 1; }
         env:
           CHANGES_UP: ${{ steps.up.outputs.resource-changes }}
           CHANGES_NOOP: ${{ steps.upnoop.outputs.resource-changes }}
+          PLAIN_NOOP: ${{ steps.upnoop.outputs.plain }}
+      - run: pulumi stack init dev
+        working-directory: .github/test-stacks/yaml-collision
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+      - name: Up expected to fail (per-key + a stack output named resource-changes)
+        uses: ./
+        id: collision
+        # GitHub Actions step property again — the job must keep running so
+        # the assertion below can inspect the failed step.
+        continue-on-error: true
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+        with:
+          command: up
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/yaml-collision
+          resource-changes: true
+          suppress-progress: true
+      - name: Assert the collision failed the action without publishing either output
+        run: |
+          [[ "$OUTCOME" == "failure" ]] || { echo "expected the collision to fail the action, got $OUTCOME"; exit 1; }
+          [[ -z "$RESOURCE_CHANGES" ]] || { echo "colliding resource-changes output must not be published: '$RESOURCE_CHANGES'"; exit 1; }
+        env:
+          OUTCOME: ${{ steps.collision.outcome }}
+          RESOURCE_CHANGES: ${{ steps.collision.outputs.resource-changes }}
   test-update-plan: # make sure the action works on a clean machine without building
     name: Action Update Plan
     runs-on: ubuntu-latest

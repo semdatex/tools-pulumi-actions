@@ -99,6 +99,7 @@ export function makeConfig() {
       getUnionInput('output-format', {
         alternatives: ['per-key', 'json', 'json-with-secrets'] as const,
       }) ?? 'per-key',
+    resourceChanges: getBooleanInput('resource-changes'),
 
     options: {
       parallel: getNumberInput('parallel', {}),

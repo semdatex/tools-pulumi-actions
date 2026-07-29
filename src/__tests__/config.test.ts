@@ -29,6 +29,7 @@ const defaultConfig: Record<string, string> = {
   debug: 'false',
   'secret-masking': 'nested',
   'output-format': 'per-key',
+  'resource-changes': 'false',
 };
 
 function setupMockedConfig(config: Record<string, string>) {
@@ -85,6 +86,7 @@ describe('config.ts', () => {
         "outputFormat": "per-key",
         "pulumiVersion": "^3",
         "remove": false,
+        "resourceChanges": false,
         "secretMasking": "nested",
         "secretsProvider": "",
         "stackName": "dev",

@@ -142421,6 +142421,7 @@ function makeConfig() {
         outputFormat: getUnionInput('output-format', {
             alternatives: ['per-key', 'json', 'json-with-secrets'],
         }) ?? 'per-key',
+        resourceChanges: inputs_getBooleanInput('resource-changes'),
         options: {
             parallel: getNumberInput('parallel', {}),
             message: inputs_getInput('message'),
@@ -144136,11 +144137,13 @@ const runAction = async (config) => {
         await stack.setAllConfig(config.configMap);
     }
     startGroup(`pulumi ${config.command} on ${config.stackName}`);
-    // Collects {op, urn, type} per changed resource for the json formats'
-    // resource-changes output. Harmless otherwise: with onEvent set the
-    // Automation API tails its own temp event log, nothing user-visible.
-    const changeCollector = createChangeCollector();
-    const onEvent = changeCollector.onEvent;
+    // Collects {op, urn, type} per changed resource for the opt-in
+    // resource-changes output. Only wired up when the flag is on, so default
+    // runs skip the Automation API's event-log plumbing entirely.
+    const changeCollector = config.resourceChanges
+        ? createChangeCollector()
+        : undefined;
+    const onEvent = changeCollector?.onEvent;
     const actions = {
         up: () => stack
             .up({ onOutput, onEvent, ...config.options })
@@ -144172,13 +144175,13 @@ const runAction = async (config) => {
     }
     catch (err) {
         // Failure keeps upstream semantics (the rethrow lands in the top-level
-        // handler: setFailed, no stack outputs, no PR comment) — but the json
-        // formats still publish resource-changes, best-effort from the events
-        // received before the error, so a step carrying the GitHub Actions step
-        // property `continue-on-error: true` (unrelated to this action's
-        // same-named input, which is pulumi's --continue-on-error) can see what
-        // the command changed or planned to change before it failed.
-        if (config.outputFormat !== 'per-key') {
+        // handler: setFailed, no stack outputs, no PR comment) — but an opted-in
+        // resource-changes output is still published, best-effort from the
+        // events received before the error, so a step carrying the GitHub
+        // Actions step property `continue-on-error: true` (unrelated to this
+        // action's same-named input, which is pulumi's --continue-on-error) can
+        // see what the command changed or planned to change before it failed.
+        if (changeCollector) {
             setOutput('resource-changes', changeCollector.toJson());
         }
         throw err;
@@ -144207,7 +144210,12 @@ const runAction = async (config) => {
         return stack.outputs();
     };
     if (config.outputFormat === 'per-key') {
-        publishStackOutputs(await fetchDecryptedOutputs(), {
+        const outputs = await fetchDecryptedOutputs();
+        if (changeCollector &&
+            Object.prototype.hasOwnProperty.call(outputs, 'resource-changes')) {
+            throw new Error("The stack output 'resource-changes' collides with the action's resource-changes output in per-key format. Rename the stack output or use output-format: json.");
+        }
+        publishStackOutputs(outputs, {
             secretMasking: config.secretMasking,
         });
     }
@@ -144228,6 +144236,8 @@ const runAction = async (config) => {
             registerSecretMasks(outputs, config.secretMasking);
         }
         setOutput('stack-outputs', buildStackOutputsJson(outputs, config.outputFormat === 'json-with-secrets'));
+    }
+    if (changeCollector) {
         // Empty for command: output, which performs no engine operation.
         setOutput('resource-changes', changeCollector.toJson());
     }
