@@ -136,7 +136,10 @@ const runAction = async (config: Config): Promise<void> => {
   core.setOutput('output', stdout);
 
   let outputs: OutputMap;
-  if (config.suppressSecretOutputs && config.stackOutputsSecrets === 'exclude') {
+  if (
+    config.suppressSecretOutputs &&
+    config.stackOutputs !== 'plaintext-secrets'
+  ) {
     // Nothing the action publishes will contain a secret value, so don't
     // decrypt any: the Automation API's outputs()/stackOutputs() always run
     // `--show-secrets`, while the raw CLI without it never lets plaintext
@@ -160,18 +163,22 @@ const runAction = async (config: Config): Promise<void> => {
     suppressSecretOutputs: config.suppressSecretOutputs,
   });
 
-  // Set after the per-key loop so the declared aggregate wins a collision
-  // with a stack output of the same name (unlike `output`, which a stack
-  // output can shadow because it is set before the loop).
-  if (Object.prototype.hasOwnProperty.call(outputs, 'stack-outputs')) {
-    core.warning(
-      "The stack output named 'stack-outputs' is shadowed by the action's aggregate stack-outputs output.",
+  // Off by default so the action's outputs are byte-identical to upstream
+  // unless the aggregate is explicitly requested. When enabled it is set
+  // after the per-key loop so the declared aggregate wins a collision with a
+  // stack output of the same name (unlike `output`, which a stack output can
+  // shadow because it is set before the loop).
+  if (config.stackOutputs !== 'off') {
+    if (Object.prototype.hasOwnProperty.call(outputs, 'stack-outputs')) {
+      core.warning(
+        "The stack output named 'stack-outputs' is shadowed by the action's aggregate stack-outputs output.",
+      );
+    }
+    core.setOutput(
+      'stack-outputs',
+      buildStackOutputsJson(outputs, config.stackOutputs),
     );
   }
-  core.setOutput(
-    'stack-outputs',
-    buildStackOutputsJson(outputs, config.stackOutputsSecrets),
-  );
 
   // Only comment on the pull request if the command is not `output`.
   if (config.command !== "output") {

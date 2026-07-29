@@ -95,10 +95,10 @@ export function makeConfig() {
       getUnionInput('secret-masking', {
         alternatives: ['nested', 'exact'] as const,
       }) ?? 'nested',
-    stackOutputsSecrets:
-      getUnionInput('stack-outputs-secrets', {
-        alternatives: ['exclude', 'plaintext'] as const,
-      }) ?? 'exclude',
+    stackOutputs:
+      getUnionInput('stack-outputs', {
+        alternatives: ['off', 'exclude-secrets', 'plaintext-secrets'] as const,
+      }) ?? 'off',
     suppressSecretOutputs: getBooleanInput('suppress-secret-outputs'),
 
     options: {

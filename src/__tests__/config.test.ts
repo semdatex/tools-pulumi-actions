@@ -28,7 +28,7 @@ const defaultConfig: Record<string, string> = {
   'log-flow': 'false',
   debug: 'false',
   'secret-masking': 'nested',
-  'stack-outputs-secrets': 'exclude',
+  'stack-outputs': 'off',
   'suppress-secret-outputs': 'false',
 };
 
@@ -88,7 +88,7 @@ describe('config.ts', () => {
         "secretMasking": "nested",
         "secretsProvider": "",
         "stackName": "dev",
-        "stackOutputsSecrets": "exclude",
+        "stackOutputs": "off",
         "suppressSecretOutputs": false,
         "upsert": false,
         "workDir": "./",
