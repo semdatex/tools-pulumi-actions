@@ -1,7 +1,8 @@
-# Fork-only fixture: a stack whose own output is named `resource-changes`,
-# used to assert that enabling the resource-changes input in per-key format
-# fails instead of silently shadowing one of the two.
+# Fork-only fixture: a stack whose own outputs are named `resource-changes`
+# and `failures`, used to assert that enabling the same-named inputs in
+# per-key format fails instead of silently shadowing one of the two.
 name: yamlcollision
 runtime: yaml
 outputs:
   resource-changes: not-the-actions-output
+  failures: not-the-actions-output-either

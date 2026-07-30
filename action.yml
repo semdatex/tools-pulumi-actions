@@ -129,6 +129,10 @@ inputs:
     description: 'If true, publish the resource-changes output: a JSON array [{op, urn, type}] of the resources the command changed (up/refresh/destroy) or planned to change (preview), excluding unchanged (same) and read steps. Works with any output-format; with per-key the action fails if the stack itself has an output named resource-changes. When the action fails the output is still set, best-effort, from the events received before the error.'
     required: false
     default: 'false'
+  failures:
+    description: 'If true, publish the failures output: a JSON array of the failures the command hit — error diagnostics as {urn?, message, protected} and failed steps as {op, urn, type, protected} — where protected is true for a protection refusal (a protect: true resource the command would delete). Works with any output-format; with per-key the action fails if the stack itself has an output named failures. When the action fails the output is still set, best-effort, from the events received before the error, so a dry-run step with the GitHub Actions step property continue-on-error: true can check whether it is red only because protected resources are leaving the stack: jq -e ''length > 0 and all(.protected)''. An empty array on a failed command means the cause was not visible in engine events (e.g. --expect-no-changes fails via CLI stderr only) and must not be treated as protection-only.'
+    required: false
+    default: 'false'
   always-include-summary:
     description: 'If comments must be trimmed, trim them from the front. This ensures the resources summary is always included in the comment'
     required: false
@@ -155,6 +159,8 @@ outputs:
     description: 'JSON object of stack outputs, `{name: {value, secret}}`. Only set with the json output formats; secret values are omitted unless the format is json-with-secrets.'
   resource-changes:
     description: 'JSON array [{op, urn, type}] of the resources the command changed (up/refresh/destroy) or planned to change (preview), excluding unchanged (same) and read steps. Only set when the resource-changes input is true — then set even when the action fails, best-effort, from the events received before the error.'
+  failures:
+    description: 'JSON array of the failures the command hit, each entry classified with protected: true when it is a protection refusal. Only set when the failures input is true — then set even when the action fails, best-effort, from the events received before the error. Empty on success and when the failure cause was not visible in engine events.'
 runs:
   using: 'node24'
   main: 'dist/index.js'

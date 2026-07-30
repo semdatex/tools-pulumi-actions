@@ -1,0 +1,6 @@
+# Fork-only fixture for the failures e2e: a dynamic-provider stack (no
+# provider plugins, no cloud) whose protected resource can be dropped from
+# the program via config, so a preview refuses the delete — and whose
+# program can be made to throw, for the non-protection failure case.
+name: protectedtest
+runtime: nodejs

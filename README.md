@@ -179,6 +179,18 @@ The action can be configured with the following arguments:
   an output named `resource-changes`, instead of silently shadowing one of
   the two.
 
+- `failures` - (optional) If `true`, publish the `failures` output: a JSON
+  array of the failures the command hit — error diagnostics as
+  `{urn?, message, protected}` and failed steps as
+  `{op, urn, type, protected}` — where `protected: true` marks a protection
+  refusal (a `protect: true` resource the command would delete). The
+  engine's bare closing trailer (`preview failed` / `update failed`, no URN)
+  is suppressed; every cause-bearing diagnostic is kept, classified
+  fail-closed (`protected: false` when in doubt). Works with any
+  `output-format`; with `per-key` the action fails if the stack itself has
+  an output named `failures`. See
+  [Detecting protection-only failures](#detecting-protection-only-failures).
+
 - `plan` - (optional) Used for
   [update plans](https://www.pulumi.com/docs/concepts/update-plans/)
 
@@ -274,6 +286,44 @@ That step property is unrelated to this action's `continue-on-error`
 *input*, which is passed through as `pulumi up --continue-on-error` and
 makes Pulumi carry on updating the remaining resources after one of them
 fails:
+
+### Detecting protection-only failures
+
+A dry-run of a change that removes `protect: true` resources from a stack
+(for example ahead of a state migration) fails by design: the engine refuses
+each protected delete. With `failures: true` such a step can distinguish
+"red only because of protections" from a genuine error, structurally:
+
+```yaml
+- uses: semdatex/tools-pulumi-actions@<sha>
+  id: preview
+  continue-on-error: true # step property: keep the job running past the red step
+  with:
+    command: preview
+    stack-name: org/project/stack
+    failures: true
+    resource-changes: true
+
+- name: Fail unless every failure is a protection refusal
+  if: steps.preview.outcome == 'failure'
+  run: |
+    jq -e 'length > 0 and all(.protected)' <<<"$FAILURES" >/dev/null || {
+      echo "::error::preview failed for reasons beyond protected deletes"
+      jq -r '.[] | select(.protected | not) | "::error::\(.urn // "<no urn>"): \(.message // .op)"' <<<"$FAILURES"
+      exit 1
+    }
+    echo "Preview is red only because protected resources are leaving the stack:"
+    jq -r '.[] | "  \(.urn)"' <<<"$FAILURES"
+  env:
+    FAILURES: ${{ steps.preview.outputs.failures }}
+```
+
+`length > 0` is load-bearing: some failures emit no engine event at all
+(`--expect-no-changes` fails via CLI stderr only), so an empty array on a
+failed command means the cause was not captured — never conclude
+"protection-only" from it. Entries are classified fail-closed: anything not
+positively recognized as a protection refusal keeps `protected: false` and
+blocks the check.
 
 ```yaml
 jobs:

@@ -30,6 +30,7 @@ const defaultConfig: Record<string, string> = {
   'secret-masking': 'nested',
   'output-format': 'per-key',
   'resource-changes': 'false',
+  failures: 'false',
 };
 
 function setupMockedConfig(config: Record<string, string>) {
@@ -57,6 +58,7 @@ describe('config.ts', () => {
         "commentOnSummary": false,
         "configMap": undefined,
         "editCommentOnPr": false,
+        "failures": false,
         "githubToken": "n/a",
         "options": {
           "color": undefined,
@@ -105,6 +107,15 @@ describe('config.ts', () => {
     expect(() => makeConfig()).toThrowErrorMatchingInlineSnapshot(
       `"Input was not correct for command. Valid alternatives are: up, update, refresh, destroy, preview, output"`,
     );
+  });
+
+  it('should parse the failures flag', async () => {
+    setupMockedConfig({
+      ...defaultConfig,
+      failures: 'true',
+    });
+
+    expect(makeConfig().failures).toBe(true);
   });
 
   it('should fail if secret-masking is invalid', async () => {

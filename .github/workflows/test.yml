@@ -301,6 +301,132 @@ jobs:
         env:
           OUTCOME: ${{ steps.collision.outcome }}
           RESOURCE_CHANGES: ${{ steps.collision.outputs.resource-changes }}
+  test-failures: # the opt-in flag must classify failures so a dry-run can tell "red only because of protections" from a genuine error
+    name: Failures Round-trip
+    runs-on: ubuntu-latest
+    env:
+      PULUMI_CONFIG_PASSPHRASE: not-a-secret
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          pulumi login --local
+          pulumi stack init dev
+        working-directory: .github/test-stacks/protected
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: 'package.json'
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: yarn build
+      - run: npm install --no-audit --no-fund
+        working-directory: .github/test-stacks/protected
+      # Failure with no engine-event cause: --expect-no-changes fails via CLI
+      # stderr only, so failures must stay [] — the documented reason the
+      # protection-only check is `length > 0 and all(.protected)`.
+      - name: Preview expected to fail without an engine-event cause (expect-no-changes)
+        uses: ./
+        id: nocausepreview
+        # The GitHub Actions step property, so the job keeps running and the
+        # assertions below can inspect the failed step — not this action's
+        # continue-on-error input (pulumi's --continue-on-error).
+        continue-on-error: true
+        with:
+          command: preview
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/protected
+          expect-no-changes: true
+          output-format: json
+          failures: true
+          suppress-progress: true
+      - name: Assert the uncaptured cause yields an empty failures array
+        run: |
+          [[ "$OUTCOME" == "failure" ]] || { echo "expected the preview step to fail, got $OUTCOME"; exit 1; }
+          [[ "$FAILURES" == "[]" ]] || { echo "expect-no-changes emits no engine failure event, got: '$FAILURES'"; exit 1; }
+        env:
+          OUTCOME: ${{ steps.nocausepreview.outcome }}
+          FAILURES: ${{ steps.nocausepreview.outputs.failures }}
+      - name: Up to seed the protected resource
+        uses: ./
+        with:
+          command: up
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/protected
+          output-format: json
+          suppress-progress: true
+      - name: Drop the protected resource from the program
+        run: pulumi config set protectedtest:guarded false --stack dev
+        working-directory: .github/test-stacks/protected
+      - name: Preview expected to fail on the refused protected delete
+        uses: ./
+        id: protectedpreview
+        # Step property again — see above.
+        continue-on-error: true
+        with:
+          command: preview
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/protected
+          output-format: json
+          failures: true
+          resource-changes: true
+          suppress-progress: true
+      - name: Assert every failure is a protection refusal, cross-referenced with the planned delete
+        run: |
+          [[ "$OUTCOME" == "failure" ]] || { echo "expected the preview step to fail, got $OUTCOME"; exit 1; }
+          jq -e 'length > 0 and all(.protected)' <<<"$FAILURES" >/dev/null || { echo "expected only protection refusals, got: '$FAILURES'"; exit 1; }
+          jq -e 'any(.[]; .urn | endswith("::guarded"))' <<<"$FAILURES" >/dev/null || { echo "the refusal must name the protected resource, got: '$FAILURES'"; exit 1; }
+          jq -e 'any(.[]; .op == "delete" and (.urn | endswith("::guarded")))' <<<"$RESOURCE_CHANGES" >/dev/null || { echo "resource-changes must carry the planned delete, got: '$RESOURCE_CHANGES'"; exit 1; }
+        env:
+          OUTCOME: ${{ steps.protectedpreview.outcome }}
+          FAILURES: ${{ steps.protectedpreview.outputs.failures }}
+          RESOURCE_CHANGES: ${{ steps.protectedpreview.outputs.resource-changes }}
+      - name: Make the program itself fail
+        run: pulumi config set protectedtest:boom true --stack dev
+        working-directory: .github/test-stacks/protected
+      - name: Preview expected to fail for a non-protection reason
+        uses: ./
+        id: brokenpreview
+        # Step property again — see above.
+        continue-on-error: true
+        with:
+          command: preview
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/protected
+          output-format: json
+          failures: true
+          suppress-progress: true
+      - name: Assert the genuine error is captured and blocks the protection-only check
+        run: |
+          [[ "$OUTCOME" == "failure" ]] || { echo "expected the preview step to fail, got $OUTCOME"; exit 1; }
+          jq -e 'length > 0' <<<"$FAILURES" >/dev/null || { echo "the program error must be captured, got: '$FAILURES'"; exit 1; }
+          jq -e 'all(.protected) | not' <<<"$FAILURES" >/dev/null || { echo "a program error must not classify as protection, got: '$FAILURES'"; exit 1; }
+        env:
+          OUTCOME: ${{ steps.brokenpreview.outcome }}
+          FAILURES: ${{ steps.brokenpreview.outputs.failures }}
+      - run: pulumi stack init dev
+        working-directory: .github/test-stacks/yaml-collision
+      - name: Up expected to fail (per-key + a stack output named failures)
+        uses: ./
+        id: failurescollision
+        # Step property again — see above.
+        continue-on-error: true
+        with:
+          command: up
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/yaml-collision
+          failures: true
+          suppress-progress: true
+      - name: Assert the collision failed the action without publishing either output
+        run: |
+          [[ "$OUTCOME" == "failure" ]] || { echo "expected the collision to fail the action, got $OUTCOME"; exit 1; }
+          [[ -z "$FAILURES" ]] || { echo "colliding failures output must not be published: '$FAILURES'"; exit 1; }
+        env:
+          OUTCOME: ${{ steps.failurescollision.outcome }}
+          FAILURES: ${{ steps.failurescollision.outputs.failures }}
   test-update-plan: # make sure the action works on a clean machine without building
     name: Action Update Plan
     runs-on: ubuntu-latest
