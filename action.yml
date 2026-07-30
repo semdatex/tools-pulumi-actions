@@ -129,8 +129,8 @@ inputs:
     description: 'If true, publish the resource-changes output: a JSON array [{op, urn, type}] of the resources the command changed (up/refresh/destroy) or planned to change (preview), excluding unchanged (same) and read steps. Works with any output-format; with per-key the action fails if the stack itself has an output named resource-changes. When the action fails the output is still set, best-effort, from the events received before the error.'
     required: false
     default: 'false'
-  failures:
-    description: 'If true, publish the failures output: a JSON array of the failures the command hit, exactly as the engine reported them — error diagnostics as {kind: diagnostic, urn?, message} (urn only when the engine provided it structurally) and failed steps as {kind: op-failed, op, urn, type}. The action does not interpret messages: the engine attaches no structured cause, so classification (e.g. recognizing protection refusals, or the engine''s bare closing "preview failed" summary, which is included) is the consumer''s job. Works with any output-format; with per-key the action fails if the stack itself has an output named failures. When the action fails the output is still set, best-effort, from the events received before the error, so a dry-run step with the GitHub Actions step property continue-on-error: true can post-process an expected failure. An empty array on a failed command means the cause was not visible in engine events (e.g. --expect-no-changes fails via CLI stderr only).'
+  error-log:
+    description: 'If true, publish the error-log output: a JSON array of the error records the command produced, exactly as the engine reported them — error diagnostics as {kind: diagnostic, urn?, message} (urn only when the engine provided it structurally) and failed steps as {kind: op-failed, op, urn, type}. The action does not interpret messages: the engine attaches no structured cause, so classification (e.g. recognizing protection refusals, or the engine''s bare closing "preview failed" summary, which is included) is the consumer''s job. Works with any output-format; with per-key the action fails if the stack itself has an output named error-log. When the action fails the output is still set, best-effort, from the events received before the error, so a dry-run step with the GitHub Actions step property continue-on-error: true can post-process an expected failure. An empty log on a failed command means the cause was not visible in engine events (e.g. --expect-no-changes fails via CLI stderr only).'
     required: false
     default: 'false'
   always-include-summary:
@@ -159,8 +159,8 @@ outputs:
     description: 'JSON object of stack outputs, `{name: {value, secret}}`. Only set with the json output formats; secret values are omitted unless the format is json-with-secrets.'
   resource-changes:
     description: 'JSON array [{op, urn, type}] of the resources the command changed (up/refresh/destroy) or planned to change (preview), excluding unchanged (same) and read steps. Only set when the resource-changes input is true — then set even when the action fails, best-effort, from the events received before the error.'
-  failures:
-    description: 'JSON array of the failures the command hit, exactly as the engine reported them: {kind: diagnostic, urn?, message} and {kind: op-failed, op, urn, type} entries in event order, uninterpreted. Only set when the failures input is true — then set even when the action fails, best-effort, from the events received before the error. Empty on success and when the failure cause was not visible in engine events.'
+  error-log:
+    description: 'JSON array of the error records the command produced, exactly as the engine reported them: {kind: diagnostic, urn?, message} and {kind: op-failed, op, urn, type} entries in event order, uninterpreted. Only set when the error-log input is true — then set even when the action fails, best-effort, from the events received before the error. Empty on success and when the failure cause was not visible in engine events.'
 runs:
   using: 'node24'
   main: 'dist/index.js'

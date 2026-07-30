@@ -1,8 +1,8 @@
 import { EngineEvent } from '@pulumi/pulumi/automation';
 
 /**
- * One failure, exactly as the engine reported it. `kind` mirrors which engine
- * event carried it — the only failure categorisation the runtime provides:
+ * One error record, exactly as the engine reported it. `kind` mirrors which
+ * engine event carried it — the only categorisation the runtime provides:
  *
  * - `diagnostic`: an error-severity diagnosticEvent. `urn` is set only when
  *   the engine provided it structurally; no value is ever parsed out of the
@@ -17,7 +17,7 @@ import { EngineEvent } from '@pulumi/pulumi/automation';
  * consumer, which knows what it is looking for and can evolve its patterns
  * without a new action release.
  */
-export type Failure =
+export type ErrorLogEntry =
   | {
       readonly kind: 'diagnostic';
       readonly urn?: string;
@@ -30,7 +30,7 @@ export type Failure =
       readonly type: string;
     };
 
-export interface FailureCollector {
+export interface ErrorLogCollector {
   readonly onEvent: (event: EngineEvent) => void;
   readonly toJson: () => string;
 }
@@ -43,25 +43,25 @@ export interface FailureCollector {
 const MESSAGE_LIMIT = 2000;
 
 /**
- * Collects the failures a command hit from engine events, in memory, as a
+ * Collects the command's error log from engine events, in memory, as a
  * faithful structured transport: every error-severity diagnostic and every
- * failed step, in event order, shaped as {@link Failure}. Nothing is
+ * failed step, in event order, shaped as {@link ErrorLogEntry}. Nothing is
  * classified and nothing is filtered beyond the error-severity selection —
  * including the engine's bare closing summary diagnostic (`preview failed` /
  * `update failed`, no URN), which consumers should filter out before cause
  * analysis.
  *
  * Note that some command failures emit no engine event at all
- * (`--expect-no-changes` fails via CLI stderr only), so an empty array on a
+ * (`--expect-no-changes` fails via CLI stderr only), so an empty log on a
  * failed command means the cause was not visible in engine events.
  */
-export function createFailureCollector(): FailureCollector {
-  const failures: Failure[] = [];
+export function createErrorLogCollector(): ErrorLogCollector {
+  const entries: ErrorLogEntry[] = [];
 
   const onEvent = (event: EngineEvent): void => {
     const failedStep = event.resOpFailedEvent?.metadata;
     if (failedStep) {
-      failures.push({
+      entries.push({
         kind: 'op-failed',
         op: failedStep.op,
         urn: failedStep.urn,
@@ -75,7 +75,7 @@ export function createFailureCollector(): FailureCollector {
       return;
     }
     const message = diag.message ?? '';
-    failures.push({
+    entries.push({
       kind: 'diagnostic',
       ...(diag.urn ? { urn: diag.urn } : {}),
       message:
@@ -85,5 +85,5 @@ export function createFailureCollector(): FailureCollector {
     });
   };
 
-  return { onEvent, toJson: () => JSON.stringify(failures) };
+  return { onEvent, toJson: () => JSON.stringify(entries) };
 }

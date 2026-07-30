@@ -1,5 +1,5 @@
 import { EngineEvent } from '@pulumi/pulumi/automation';
-import { createFailureCollector } from '../failures';
+import { createErrorLogCollector } from '../error-log';
 
 function diagEvent(
   severity: string,
@@ -27,9 +27,9 @@ function opFailedEvent(op: string, urn: string, type: string): EngineEvent {
 
 const guardedUrn = 'urn:pulumi:dev::proj::pulumi-nodejs:dynamic:Resource::guarded';
 
-describe('createFailureCollector', () => {
+describe('createErrorLogCollector', () => {
   it('records an error diagnostic verbatim with its structured urn', () => {
-    const collector = createFailureCollector();
+    const collector = createErrorLogCollector();
     // Shape observed from a real engine run: a protection refusal carrying
     // the urn both structured and inside the message. The collector must
     // transport it, not interpret it.
@@ -41,16 +41,16 @@ describe('createFailureCollector', () => {
   });
 
   it('does not parse a urn out of the message text', () => {
-    const collector = createFailureCollector();
+    const collector = createErrorLogCollector();
     const message = `error: resource "${guardedUrn}" is protected and can't be deleted`;
     collector.onEvent(diagEvent('error', message));
-    const failures = JSON.parse(collector.toJson());
-    expect(failures).toEqual([{ kind: 'diagnostic', message }]);
-    expect(failures[0].urn).toBeUndefined();
+    const entries = JSON.parse(collector.toJson());
+    expect(entries).toEqual([{ kind: 'diagnostic', message }]);
+    expect(entries[0].urn).toBeUndefined();
   });
 
   it('keeps urn-less diagnostics, including the engine closing summary', () => {
-    const collector = createFailureCollector();
+    const collector = createErrorLogCollector();
     // Shapes observed from real engine runs: the bare trailer restating that
     // the command failed. Filtering it would be message interpretation, which
     // is the consumer's job — the collector keeps it.
@@ -72,7 +72,7 @@ describe('createFailureCollector', () => {
   });
 
   it('ignores non-error severities', () => {
-    const collector = createFailureCollector();
+    const collector = createErrorLogCollector();
     collector.onEvent(diagEvent('info', 'hello'));
     collector.onEvent(diagEvent('info#err', 'stderr chatter'));
     collector.onEvent(diagEvent('warning', 'something worrying'));
@@ -80,7 +80,7 @@ describe('createFailureCollector', () => {
   });
 
   it('records failed steps with their runtime metadata', () => {
-    const collector = createFailureCollector();
+    const collector = createErrorLogCollector();
     collector.onEvent(
       opFailedEvent(
         'create',
@@ -98,27 +98,27 @@ describe('createFailureCollector', () => {
     ]);
   });
 
-  it('preserves event order across mixed failure kinds', () => {
-    const collector = createFailureCollector();
+  it('preserves event order across mixed entry kinds', () => {
+    const collector = createErrorLogCollector();
     collector.onEvent(
       opFailedEvent('update', 'urn:pulumi:dev::proj::t::x', 't'),
     );
     collector.onEvent(diagEvent('error', 'boom', guardedUrn));
     expect(
-      JSON.parse(collector.toJson()).map((f: { kind: string }) => f.kind),
+      JSON.parse(collector.toJson()).map((e: { kind: string }) => e.kind),
     ).toEqual(['op-failed', 'diagnostic']);
   });
 
   it('truncates oversized messages', () => {
-    const collector = createFailureCollector();
+    const collector = createErrorLogCollector();
     collector.onEvent(diagEvent('error', 'x'.repeat(5000)));
-    const failures = JSON.parse(collector.toJson());
-    expect(failures[0].message).toHaveLength(2001);
-    expect(failures[0].message.endsWith('…')).toBe(true);
+    const entries = JSON.parse(collector.toJson());
+    expect(entries[0].message).toHaveLength(2001);
+    expect(entries[0].message.endsWith('…')).toBe(true);
   });
 
-  it('reports an empty array when nothing failed', () => {
-    const collector = createFailureCollector();
+  it('reports an empty log when nothing failed', () => {
+    const collector = createErrorLogCollector();
     expect(collector.toJson()).toEqual('[]');
   });
 });

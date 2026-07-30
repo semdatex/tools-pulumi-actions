@@ -301,8 +301,8 @@ jobs:
         env:
           OUTCOME: ${{ steps.collision.outcome }}
           RESOURCE_CHANGES: ${{ steps.collision.outputs.resource-changes }}
-  test-failures: # the opt-in flag must classify failures so a dry-run can tell "red only because of protections" from a genuine error
-    name: Failures Round-trip
+  test-error-log: # the opt-in flag must transport the engine's error records so a dry-run consumer can tell "red only because of protections" from a genuine error
+    name: Error Log Round-trip
     runs-on: ubuntu-latest
     env:
       PULUMI_CONFIG_PASSPHRASE: not-a-secret
@@ -321,8 +321,8 @@ jobs:
       - run: npm install --no-audit --no-fund
         working-directory: .github/test-stacks/protected
       # Failure with no engine-event cause: --expect-no-changes fails via CLI
-      # stderr only, so failures must stay [] — the documented reason the
-      # protection-only check is `length > 0 and all(.protected)`.
+      # stderr only, so the error log must stay [] — the documented reason a
+      # consumer's protection-only check needs its `length > 0` half.
       - name: Preview expected to fail without an engine-event cause (expect-no-changes)
         uses: ./
         id: nocausepreview
@@ -337,15 +337,15 @@ jobs:
           work-dir: .github/test-stacks/protected
           expect-no-changes: true
           output-format: json
-          failures: true
+          error-log: true
           suppress-progress: true
-      - name: Assert the uncaptured cause yields an empty failures array
+      - name: Assert the uncaptured cause yields an empty error log
         run: |
           [[ "$OUTCOME" == "failure" ]] || { echo "expected the preview step to fail, got $OUTCOME"; exit 1; }
-          [[ "$FAILURES" == "[]" ]] || { echo "expect-no-changes emits no engine failure event, got: '$FAILURES'"; exit 1; }
+          [[ "$ERROR_LOG" == "[]" ]] || { echo "expect-no-changes emits no engine error event, got: '$ERROR_LOG'"; exit 1; }
         env:
           OUTCOME: ${{ steps.nocausepreview.outcome }}
-          FAILURES: ${{ steps.nocausepreview.outputs.failures }}
+          ERROR_LOG: ${{ steps.nocausepreview.outputs['error-log'] }}
       - name: Up to seed the protected resource
         uses: ./
         with:
@@ -369,23 +369,23 @@ jobs:
           stack-name: dev
           work-dir: .github/test-stacks/protected
           output-format: json
-          failures: true
+          error-log: true
           resource-changes: true
           suppress-progress: true
       - name: Assert the refusal arrives uninterpreted and the consumer-side check works
-        # The action ships the failures as data; classification is the
+        # The action ships the error records as data; classification is the
         # consumer's job. This assertion IS the documented consumer pattern:
         # drop the engine's closing summary, then pattern-match the causes.
         run: |
           [[ "$OUTCOME" == "failure" ]] || { echo "expected the preview step to fail, got $OUTCOME"; exit 1; }
-          jq -e 'all(.kind == "diagnostic" or .kind == "op-failed")' <<<"$FAILURES" >/dev/null || { echo "every entry must carry its engine event kind, got: '$FAILURES'"; exit 1; }
-          causes=$(jq '[.[] | select((.message // "") | test("^(preview|update|refresh|destroy) failed\\s*$") | not)]' <<<"$FAILURES")
+          jq -e 'all(.kind == "diagnostic" or .kind == "op-failed")' <<<"$ERROR_LOG" >/dev/null || { echo "every entry must carry its engine event kind, got: '$ERROR_LOG'"; exit 1; }
+          causes=$(jq '[.[] | select((.message // "") | test("^(preview|update|refresh|destroy) failed\\s*$") | not)]' <<<"$ERROR_LOG")
           jq -e 'length > 0 and all((.message // "") | test("protect"; "i") and test("delet"; "i"))' <<<"$causes" >/dev/null || { echo "expected only protection refusals after dropping the summary, got: '$causes'"; exit 1; }
           jq -e 'any(.[]; .urn // "" | endswith("::guarded"))' <<<"$causes" >/dev/null || { echo "the refusal must carry the structured urn of the protected resource, got: '$causes'"; exit 1; }
           jq -e 'any(.[]; .op == "delete" and (.urn | endswith("::guarded")))' <<<"$RESOURCE_CHANGES" >/dev/null || { echo "resource-changes must carry the planned delete, got: '$RESOURCE_CHANGES'"; exit 1; }
         env:
           OUTCOME: ${{ steps.protectedpreview.outcome }}
-          FAILURES: ${{ steps.protectedpreview.outputs.failures }}
+          ERROR_LOG: ${{ steps.protectedpreview.outputs['error-log'] }}
           RESOURCE_CHANGES: ${{ steps.protectedpreview.outputs.resource-changes }}
       - name: Make the program itself fail
         run: pulumi config set protectedtest:boom true --stack dev
@@ -401,22 +401,22 @@ jobs:
           stack-name: dev
           work-dir: .github/test-stacks/protected
           output-format: json
-          failures: true
+          error-log: true
           suppress-progress: true
       - name: Assert the genuine error is captured and blocks the consumer-side check
         run: |
           [[ "$OUTCOME" == "failure" ]] || { echo "expected the preview step to fail, got $OUTCOME"; exit 1; }
-          causes=$(jq '[.[] | select((.message // "") | test("^(preview|update|refresh|destroy) failed\\s*$") | not)]' <<<"$FAILURES")
-          jq -e 'length > 0' <<<"$causes" >/dev/null || { echo "the program error must be captured, got: '$FAILURES'"; exit 1; }
+          causes=$(jq '[.[] | select((.message // "") | test("^(preview|update|refresh|destroy) failed\\s*$") | not)]' <<<"$ERROR_LOG")
+          jq -e 'length > 0' <<<"$causes" >/dev/null || { echo "the program error must be captured, got: '$ERROR_LOG'"; exit 1; }
           jq -e 'all((.message // "") | test("protect"; "i") and test("delet"; "i")) | not' <<<"$causes" >/dev/null || { echo "a program error must not pass the protection pattern, got: '$causes'"; exit 1; }
         env:
           OUTCOME: ${{ steps.brokenpreview.outcome }}
-          FAILURES: ${{ steps.brokenpreview.outputs.failures }}
+          ERROR_LOG: ${{ steps.brokenpreview.outputs['error-log'] }}
       - run: pulumi stack init dev
         working-directory: .github/test-stacks/yaml-collision
-      - name: Up expected to fail (per-key + a stack output named failures)
+      - name: Up expected to fail (per-key + a stack output named error-log)
         uses: ./
-        id: failurescollision
+        id: errorlogcollision
         # Step property again — see above.
         continue-on-error: true
         with:
@@ -424,15 +424,15 @@ jobs:
           cloud-url: file://~
           stack-name: dev
           work-dir: .github/test-stacks/yaml-collision
-          failures: true
+          error-log: true
           suppress-progress: true
       - name: Assert the collision failed the action without publishing either output
         run: |
           [[ "$OUTCOME" == "failure" ]] || { echo "expected the collision to fail the action, got $OUTCOME"; exit 1; }
-          [[ -z "$FAILURES" ]] || { echo "colliding failures output must not be published: '$FAILURES'"; exit 1; }
+          [[ -z "$ERROR_LOG" ]] || { echo "colliding error-log output must not be published: '$ERROR_LOG'"; exit 1; }
         env:
-          OUTCOME: ${{ steps.failurescollision.outcome }}
-          FAILURES: ${{ steps.failurescollision.outputs.failures }}
+          OUTCOME: ${{ steps.errorlogcollision.outcome }}
+          ERROR_LOG: ${{ steps.errorlogcollision.outputs['error-log'] }}
   test-update-plan: # make sure the action works on a clean machine without building
     name: Action Update Plan
     runs-on: ubuntu-latest

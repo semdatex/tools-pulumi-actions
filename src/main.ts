@@ -19,7 +19,7 @@ import {
 } from './config';
 import { createChangeCollector } from './libs/changes';
 import { environmentVariables } from './libs/envs';
-import { createFailureCollector } from './libs/failures';
+import { createErrorLogCollector } from './libs/error-log';
 import {
   buildStackOutputsJson,
   fetchOutputsWithoutDecrypting,
@@ -109,16 +109,16 @@ const runAction = async (config: Config): Promise<void> => {
   core.startGroup(`pulumi ${config.command} on ${config.stackName}`);
 
   // Collects {op, urn, type} per changed resource for the opt-in
-  // resource-changes output, and classified failures for the opt-in failures
-  // output. Only wired up when a flag is on, so default runs skip the
-  // Automation API's event-log plumbing entirely.
+  // resource-changes output, and the engine's error records for the opt-in
+  // error-log output. Only wired up when a flag is on, so default runs skip
+  // the Automation API's event-log plumbing entirely.
   const changeCollector = config.resourceChanges
     ? createChangeCollector()
     : undefined;
-  const failureCollector = config.failures
-    ? createFailureCollector()
+  const errorLogCollector = config.errorLog
+    ? createErrorLogCollector()
     : undefined;
-  const collectors = [changeCollector, failureCollector].filter(
+  const collectors = [changeCollector, errorLogCollector].filter(
     (collector) => collector !== undefined,
   );
   const onEvent =
@@ -163,7 +163,7 @@ const runAction = async (config: Config): Promise<void> => {
   } catch (err) {
     // Failure keeps upstream semantics (the rethrow lands in the top-level
     // handler: setFailed, no stack outputs, no PR comment) — but opted-in
-    // resource-changes and failures outputs are still published, best-effort
+    // resource-changes and error-log outputs are still published, best-effort
     // from the events received before the error, so a step carrying the
     // GitHub Actions step property `continue-on-error: true` (unrelated to
     // this action's same-named input, which is pulumi's --continue-on-error)
@@ -172,8 +172,8 @@ const runAction = async (config: Config): Promise<void> => {
     if (changeCollector) {
       core.setOutput('resource-changes', changeCollector.toJson());
     }
-    if (failureCollector) {
-      core.setOutput('failures', failureCollector.toJson());
+    if (errorLogCollector) {
+      core.setOutput('error-log', errorLogCollector.toJson());
     }
     throw err;
   }
@@ -213,11 +213,11 @@ const runAction = async (config: Config): Promise<void> => {
       );
     }
     if (
-      failureCollector &&
-      Object.prototype.hasOwnProperty.call(outputs, 'failures')
+      errorLogCollector &&
+      Object.prototype.hasOwnProperty.call(outputs, 'error-log')
     ) {
       throw new Error(
-        "The stack output 'failures' collides with the action's failures output in per-key format. Rename the stack output or use output-format: json.",
+        "The stack output 'error-log' collides with the action's error-log output in per-key format. Rename the stack output or use output-format: json.",
       );
     }
     publishStackOutputs(outputs, {
@@ -248,10 +248,10 @@ const runAction = async (config: Config): Promise<void> => {
     // Empty for command: output, which performs no engine operation.
     core.setOutput('resource-changes', changeCollector.toJson());
   }
-  if (failureCollector) {
+  if (errorLogCollector) {
     // Usually empty on success; non-empty when pulumi's --continue-on-error
     // let the command succeed past failed steps.
-    core.setOutput('failures', failureCollector.toJson());
+    core.setOutput('error-log', errorLogCollector.toJson());
   }
 
   // Only comment on the pull request if the command is not `output`.

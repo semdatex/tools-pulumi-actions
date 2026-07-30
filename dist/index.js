@@ -142422,7 +142422,7 @@ function makeConfig() {
             alternatives: ['per-key', 'json', 'json-with-secrets'],
         }) ?? 'per-key',
         resourceChanges: inputs_getBooleanInput('resource-changes'),
-        failures: inputs_getBooleanInput('failures'),
+        errorLog: inputs_getBooleanInput('error-log'),
         options: {
             parallel: getNumberInput('parallel', {}),
             message: inputs_getInput('message'),
@@ -142491,7 +142491,7 @@ const environmentVariables = envalid_dist.cleanEnv(process.env, {
     GITHUB_WORKSPACE: envalid_dist.str(),
 });
 
-;// CONCATENATED MODULE: ./src/libs/failures.ts
+;// CONCATENATED MODULE: ./src/libs/error-log.ts
 /**
  * Diagnostic messages are kept verbatim up to this length — long enough for
  * any engine or provider error observed in practice, short enough that a
@@ -142499,24 +142499,24 @@ const environmentVariables = envalid_dist.cleanEnv(process.env, {
  */
 const MESSAGE_LIMIT = 2000;
 /**
- * Collects the failures a command hit from engine events, in memory, as a
+ * Collects the command's error log from engine events, in memory, as a
  * faithful structured transport: every error-severity diagnostic and every
- * failed step, in event order, shaped as {@link Failure}. Nothing is
+ * failed step, in event order, shaped as {@link ErrorLogEntry}. Nothing is
  * classified and nothing is filtered beyond the error-severity selection —
  * including the engine's bare closing summary diagnostic (`preview failed` /
  * `update failed`, no URN), which consumers should filter out before cause
  * analysis.
  *
  * Note that some command failures emit no engine event at all
- * (`--expect-no-changes` fails via CLI stderr only), so an empty array on a
+ * (`--expect-no-changes` fails via CLI stderr only), so an empty log on a
  * failed command means the cause was not visible in engine events.
  */
-function createFailureCollector() {
-    const failures = [];
+function createErrorLogCollector() {
+    const entries = [];
     const onEvent = (event) => {
         const failedStep = event.resOpFailedEvent?.metadata;
         if (failedStep) {
-            failures.push({
+            entries.push({
                 kind: 'op-failed',
                 op: failedStep.op,
                 urn: failedStep.urn,
@@ -142529,7 +142529,7 @@ function createFailureCollector() {
             return;
         }
         const message = diag.message ?? '';
-        failures.push({
+        entries.push({
             kind: 'diagnostic',
             ...(diag.urn ? { urn: diag.urn } : {}),
             message: message.length > MESSAGE_LIMIT
@@ -142537,7 +142537,7 @@ function createFailureCollector() {
                 : message,
         });
     };
-    return { onEvent, toJson: () => JSON.stringify(failures) };
+    return { onEvent, toJson: () => JSON.stringify(entries) };
 }
 
 // EXTERNAL MODULE: ./node_modules/semver/index.js
@@ -144189,16 +144189,16 @@ const runAction = async (config) => {
     }
     startGroup(`pulumi ${config.command} on ${config.stackName}`);
     // Collects {op, urn, type} per changed resource for the opt-in
-    // resource-changes output, and classified failures for the opt-in failures
-    // output. Only wired up when a flag is on, so default runs skip the
-    // Automation API's event-log plumbing entirely.
+    // resource-changes output, and the engine's error records for the opt-in
+    // error-log output. Only wired up when a flag is on, so default runs skip
+    // the Automation API's event-log plumbing entirely.
     const changeCollector = config.resourceChanges
         ? createChangeCollector()
         : undefined;
-    const failureCollector = config.failures
-        ? createFailureCollector()
+    const errorLogCollector = config.errorLog
+        ? createErrorLogCollector()
         : undefined;
-    const collectors = [changeCollector, failureCollector].filter((collector) => collector !== undefined);
+    const collectors = [changeCollector, errorLogCollector].filter((collector) => collector !== undefined);
     const onEvent = collectors.length > 0
         ? (event) => collectors.forEach((collector) => collector.onEvent(event))
         : undefined;
@@ -144234,7 +144234,7 @@ const runAction = async (config) => {
     catch (err) {
         // Failure keeps upstream semantics (the rethrow lands in the top-level
         // handler: setFailed, no stack outputs, no PR comment) — but opted-in
-        // resource-changes and failures outputs are still published, best-effort
+        // resource-changes and error-log outputs are still published, best-effort
         // from the events received before the error, so a step carrying the
         // GitHub Actions step property `continue-on-error: true` (unrelated to
         // this action's same-named input, which is pulumi's --continue-on-error)
@@ -144243,8 +144243,8 @@ const runAction = async (config) => {
         if (changeCollector) {
             setOutput('resource-changes', changeCollector.toJson());
         }
-        if (failureCollector) {
-            setOutput('failures', failureCollector.toJson());
+        if (errorLogCollector) {
+            setOutput('error-log', errorLogCollector.toJson());
         }
         throw err;
     }
@@ -144277,9 +144277,9 @@ const runAction = async (config) => {
             Object.prototype.hasOwnProperty.call(outputs, 'resource-changes')) {
             throw new Error("The stack output 'resource-changes' collides with the action's resource-changes output in per-key format. Rename the stack output or use output-format: json.");
         }
-        if (failureCollector &&
-            Object.prototype.hasOwnProperty.call(outputs, 'failures')) {
-            throw new Error("The stack output 'failures' collides with the action's failures output in per-key format. Rename the stack output or use output-format: json.");
+        if (errorLogCollector &&
+            Object.prototype.hasOwnProperty.call(outputs, 'error-log')) {
+            throw new Error("The stack output 'error-log' collides with the action's error-log output in per-key format. Rename the stack output or use output-format: json.");
         }
         publishStackOutputs(outputs, {
             secretMasking: config.secretMasking,
@@ -144307,10 +144307,10 @@ const runAction = async (config) => {
         // Empty for command: output, which performs no engine operation.
         setOutput('resource-changes', changeCollector.toJson());
     }
-    if (failureCollector) {
+    if (errorLogCollector) {
         // Usually empty on success; non-empty when pulumi's --continue-on-error
         // let the command succeed past failed steps.
-        setOutput('failures', failureCollector.toJson());
+        setOutput('error-log', errorLogCollector.toJson());
     }
     // Only comment on the pull request if the command is not `output`.
     if (config.command !== "output") {
