@@ -99,10 +99,9 @@ export function makeConfig() {
       getUnionInput('output-format', {
         alternatives: ['per-key', 'json', 'json-with-secrets'] as const,
       }) ?? 'per-key',
-    resourceChanges:
-      getUnionInput('resource-changes', {
-        alternatives: ['true', 'false', 'all'] as const,
-      }) ?? 'false',
+    resourceChanges: getUnionInput('resource-changes', {
+      alternatives: ['changed', 'all'] as const,
+    }),
     errorLog: getBooleanInput('error-log'),
 
     options: {

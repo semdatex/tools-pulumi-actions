@@ -171,20 +171,22 @@ The action can be configured with the following arguments:
   with-secrets aggregate within the same job; `json` is the format that
   survives cross-job wiring.
 
-- `resource-changes` - (optional) If `true`, publish the `resource-changes`
-  output: a JSON array `[{op, urn, type}]` of the resources the command
-  changed (`up`, `refresh`, `destroy`) or planned to change (`preview`),
-  excluding unchanged (`same`) and data-source `read` steps. If `all`,
-  unchanged and `read` steps are included too — the full op-by-URN account
-  of the run, for consumers that must prove what a run did **not** touch
-  (e.g. migration validation, where a still-declared resource's `same` op
-  is the proof it isn't leaving the stack). Note `all` scales with total
-  resource count, not change count; step outputs cap at ~1 MB. When
-  enabled, the action also renders the same data verbatim into the job
-  step summary (per-op counts plus a collapsible Op/Type/URN table, capped
-  at 100 rows but never silently). Works with any `output-format`; with
-  `per-key` the action fails if the stack itself has an output named
-  `resource-changes`, instead of silently shadowing one of the two.
+- `resource-changes` - (optional) Which resource steps to report, as the
+  `resource-changes` output: a JSON array `[{op, urn, type}]`. **Omit to
+  disable** — no output, no summary section, and none of the engine-event
+  plumbing. `changed`: the resources the command changed (`up`, `refresh`,
+  `destroy`) or planned to change (`preview`), excluding unchanged (`same`)
+  and data-source `read` steps. `all`: every step, `same` and `read`
+  included — the full op-by-URN account of the run, for consumers that must
+  prove what a run did **not** touch (e.g. migration validation, where a
+  still-declared resource's `same` op is the proof it isn't leaving the
+  stack). Note `all` scales with total resource count, not change count;
+  step outputs cap at ~1 MB. When set, the action also renders the same
+  data verbatim into the job step summary (per-op counts plus a collapsible
+  Op/Type/URN table, capped at 100 rows but never silently). Works with any
+  `output-format`; with `per-key` the action fails if the stack itself has
+  an output named `resource-changes`, instead of silently shadowing one of
+  the two.
 
 - `error-log` - (optional) If `true`, publish the `error-log` output: a JSON
   array of the error records the command produced, exactly as the engine
@@ -286,8 +288,9 @@ never even enter the process. Unlike `toJSON(steps.pulumi.outputs)` the
 aggregate contains neither the command log nor any secret value, so it is
 safe to pass across jobs (GitHub strips job outputs that contain masked
 values) and `fromJSON(...)` yields real objects instead of double-encoded
-strings. With `resource-changes: true`, the action additionally sets the
-`resource-changes` output described above. When the command fails, that
+strings. With `resource-changes: changed` (or `all`), the action
+additionally sets the `resource-changes` output described above. When the
+command fails, that
 output is still published, best-effort, from the events received before the
 error — so a failed preview reports *which* resources it was planning to
 touch. To post-process a command that is expected to fail, combine that with
@@ -315,7 +318,7 @@ provides none:
     command: preview
     stack-name: org/project/stack
     error-log: true
-    resource-changes: true
+    resource-changes: changed
 
 - name: Fail unless every error is a protection refusal
   if: steps.preview.outcome == 'failure'

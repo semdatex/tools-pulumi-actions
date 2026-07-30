@@ -142422,8 +142422,8 @@ function makeConfig() {
             alternatives: ['per-key', 'json', 'json-with-secrets'],
         }) ?? 'per-key',
         resourceChanges: getUnionInput('resource-changes', {
-            alternatives: ['true', 'false', 'all'],
-        }) ?? 'false',
+            alternatives: ['changed', 'all'],
+        }),
         errorLog: inputs_getBooleanInput('error-log'),
         options: {
             parallel: getNumberInput('parallel', {}),
@@ -144288,11 +144288,11 @@ const runAction = async (config) => {
     }
     startGroup(`pulumi ${config.command} on ${config.stackName}`);
     // Collects {op, urn, type} per resource step for the opt-in
-    // resource-changes output (changed steps only, or every step including
-    // same/read with 'all'), and the engine's error records for the opt-in
-    // error-log output. Only wired up when a flag is on, so default runs skip
-    // the Automation API's event-log plumbing entirely.
-    const changeCollector = config.resourceChanges !== 'false'
+    // resource-changes output ('changed' steps only, or 'all' steps including
+    // same/read), and the engine's error records for the opt-in error-log
+    // output. Only wired up when a flag is set, so default runs skip the
+    // Automation API's event-log plumbing entirely.
+    const changeCollector = config.resourceChanges
         ? createChangeCollector({
             includeUnchanged: config.resourceChanges === 'all',
         })
