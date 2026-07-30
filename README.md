@@ -174,16 +174,25 @@ The action can be configured with the following arguments:
 - `resource-changes` - (optional) If `true`, publish the `resource-changes`
   output: a JSON array `[{op, urn, type}]` of the resources the command
   changed (`up`, `refresh`, `destroy`) or planned to change (`preview`),
-  excluding unchanged (`same`) and data-source `read` steps. Works with any
-  `output-format`; with `per-key` the action fails if the stack itself has
-  an output named `resource-changes`, instead of silently shadowing one of
-  the two.
+  excluding unchanged (`same`) and data-source `read` steps. If `all`,
+  unchanged and `read` steps are included too — the full op-by-URN account
+  of the run, for consumers that must prove what a run did **not** touch
+  (e.g. migration validation, where a still-declared resource's `same` op
+  is the proof it isn't leaving the stack). Note `all` scales with total
+  resource count, not change count; step outputs cap at ~1 MB. When
+  enabled, the action also renders the same data verbatim into the job
+  step summary (per-op counts plus a collapsible Op/Type/URN table, capped
+  at 100 rows but never silently). Works with any `output-format`; with
+  `per-key` the action fails if the stack itself has an output named
+  `resource-changes`, instead of silently shadowing one of the two.
 
 - `error-log` - (optional) If `true`, publish the `error-log` output: a JSON
   array of the error records the command produced, exactly as the engine
   reported them — error diagnostics as `{kind: "diagnostic", urn?, message}`
   (`urn` only when the engine provided it structurally) and failed steps as
-  `{kind: "op-failed", op, urn, type}`, in event order. The action does
+  `{kind: "op-failed", op, urn, type}`, in event order. When enabled and
+  the log is non-empty, the action also renders it verbatim into the job
+  step summary (URN plus first message line per record). The action does
   **not** interpret messages: the engine attaches no structured cause to a
   diagnostic, so any classification would be a wording-dependent heuristic
   baked into the action. Interpretation — recognizing protection refusals,

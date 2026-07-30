@@ -275,6 +275,25 @@ jobs:
           CHANGES_UP: ${{ steps.up.outputs.resource-changes }}
           CHANGES_NOOP: ${{ steps.upnoop.outputs.resource-changes }}
           PLAIN_NOOP: ${{ steps.upnoop.outputs.plain }}
+      - name: Run Pulumi Up once more (resource-changes all, still a no-op)
+        uses: ./
+        id: upall
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+        with:
+          command: up
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/yaml
+          output-format: json
+          resource-changes: all
+          suppress-progress: true
+      - name: Assert the full account reports the unchanged steps a no-op run has
+        run: |
+          jq -e 'length > 0 and all(.[]; .op == "same")' <<<"$CHANGES_ALL" >/dev/null || { echo "all-mode no-op must report only same steps: '$CHANGES_ALL'"; exit 1; }
+          jq -e 'any(.[]; .urn | contains("pulumi:pulumi:Stack"))' <<<"$CHANGES_ALL" >/dev/null || { echo "all-mode must include the stack resource: '$CHANGES_ALL'"; exit 1; }
+        env:
+          CHANGES_ALL: ${{ steps.upall.outputs.resource-changes }}
       - run: pulumi stack init dev
         working-directory: .github/test-stacks/yaml-collision
         env:

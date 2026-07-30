@@ -28,6 +28,7 @@ import {
 } from './libs/outputs';
 import { handlePullRequestMessage } from './libs/pr';
 import * as pulumiCli from './libs/pulumi-cli';
+import { writeRunSummary } from './libs/run-summary';
 import { handleSummaryMessage } from './libs/summary';
 import { login } from './login';
 
@@ -108,13 +109,17 @@ const runAction = async (config: Config): Promise<void> => {
 
   core.startGroup(`pulumi ${config.command} on ${config.stackName}`);
 
-  // Collects {op, urn, type} per changed resource for the opt-in
-  // resource-changes output, and the engine's error records for the opt-in
+  // Collects {op, urn, type} per resource step for the opt-in
+  // resource-changes output (changed steps only, or every step including
+  // same/read with 'all'), and the engine's error records for the opt-in
   // error-log output. Only wired up when a flag is on, so default runs skip
   // the Automation API's event-log plumbing entirely.
-  const changeCollector = config.resourceChanges
-    ? createChangeCollector()
-    : undefined;
+  const changeCollector =
+    config.resourceChanges !== 'false'
+      ? createChangeCollector({
+          includeUnchanged: config.resourceChanges === 'all',
+        })
+      : undefined;
   const errorLogCollector = config.errorLog
     ? createErrorLogCollector()
     : undefined;
@@ -174,6 +179,18 @@ const runAction = async (config: Config): Promise<void> => {
     }
     if (errorLogCollector) {
       core.setOutput('error-log', errorLogCollector.toJson());
+    }
+    // Render what was collected into the job summary too — never throws, so
+    // it cannot mask the command's real error being rethrown below.
+    if (config.command !== 'output') {
+      await writeRunSummary({
+        changes: changeCollector
+          ? { json: changeCollector.toJson(), command: config.command }
+          : undefined,
+        errorLog: errorLogCollector
+          ? { json: errorLogCollector.toJson() }
+          : undefined,
+      });
     }
     throw err;
   }
@@ -252,6 +269,19 @@ const runAction = async (config: Config): Promise<void> => {
     // Usually empty on success; non-empty when pulumi's --continue-on-error
     // let the command succeed past failed steps.
     core.setOutput('error-log', errorLogCollector.toJson());
+  }
+  // Render the collected data into the job summary. Skipped entirely for
+  // command: output, which performs no engine operation — an always-empty
+  // "No resource changes." section would be noise.
+  if (config.command !== 'output') {
+    await writeRunSummary({
+      changes: changeCollector
+        ? { json: changeCollector.toJson(), command: config.command }
+        : undefined,
+      errorLog: errorLogCollector
+        ? { json: errorLogCollector.toJson() }
+        : undefined,
+    });
   }
 
   // Only comment on the pull request if the command is not `output`.

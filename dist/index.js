@@ -142421,7 +142421,9 @@ function makeConfig() {
         outputFormat: getUnionInput('output-format', {
             alternatives: ['per-key', 'json', 'json-with-secrets'],
         }) ?? 'per-key',
-        resourceChanges: inputs_getBooleanInput('resource-changes'),
+        resourceChanges: getUnionInput('resource-changes', {
+            alternatives: ['true', 'false', 'all'],
+        }) ?? 'false',
         errorLog: inputs_getBooleanInput('error-log'),
         options: {
             parallel: getNumberInput('parallel', {}),
@@ -142455,9 +142457,10 @@ function makeConfig() {
 
 ;// CONCATENATED MODULE: ./src/libs/changes.ts
 /**
- * Collects resource-level changes from engine events, in memory. A change is
- * any step whose operation is not `same` (unchanged) or `read` (data-source
- * read): creates, updates, deletes, replacements, imports, refreshes.
+ * Collects resource-level steps from engine events, in memory. By default a
+ * step is reported when its operation is not `same` (unchanged) or `read`
+ * (data-source read): creates, updates, deletes, replacements, imports,
+ * refreshes. With `includeUnchanged`, every step is reported.
  *
  * During an update both resourcePreEvent (step scheduled) and
  * resOutputsEvent (step done) fire for the same step; during a preview only
@@ -142465,13 +142468,17 @@ function makeConfig() {
  * once, in event order. resOpFailedEvent metadata is collected too, so a
  * failed command still reports the step it died on.
  */
-function createChangeCollector() {
+function createChangeCollector(options = {}) {
     const changes = new Map();
     const onEvent = (event) => {
         const metadata = event.resourcePreEvent?.metadata ??
             event.resOutputsEvent?.metadata ??
             event.resOpFailedEvent?.metadata;
-        if (!metadata || metadata.op === 'same' || metadata.op === 'read') {
+        if (!metadata) {
+            return;
+        }
+        if (!options.includeUnchanged &&
+            (metadata.op === 'same' || metadata.op === 'read')) {
             return;
         }
         changes.set(`${metadata.urn}|${metadata.op}`, {
@@ -144050,6 +144057,95 @@ async function handlePullRequestMessage(config, projectName, output) {
     });
 }
 
+;// CONCATENATED MODULE: ./src/libs/run-summary.ts
+
+/**
+ * Verbatim step-summary rendering of the action's own structured data — the
+ * resource-changes and error-log outputs — so every consumer gets a legible
+ * job summary without pasting the same rendering shell into its workflow.
+ *
+ * Presentation only, deliberately no interpretation: entries are rendered as
+ * reported (the engine's bare closing record included), tables are capped
+ * but never silently (a run past the cap says how many rows it left out),
+ * and nothing here classifies a message. Consumers that want verdicts (e.g.
+ * "is this run red only because of protections?") build them on the outputs.
+ */
+/** Rows rendered per section; past this the section says what it dropped. */
+const MAX_ROWS = 100;
+function firstLine(message) {
+    const line = message.split('\n', 1)[0].trim();
+    // Keep table cells intact: the message is arbitrary text, the pipe is the
+    // one character that would break out of the cell.
+    return line.replace(/\|/g, '\\|');
+}
+function renderResourceChangesSummary(changes, command) {
+    const heading = command === 'preview' ? 'Planned resource changes' : 'Resource changes';
+    const lines = [`### ${heading}`, ''];
+    if (changes.length === 0) {
+        lines.push('No resource changes.');
+        return lines.join('\n');
+    }
+    const countsByOp = new Map();
+    for (const change of changes) {
+        countsByOp.set(change.op, (countsByOp.get(change.op) ?? 0) + 1);
+    }
+    lines.push([...countsByOp.entries()].map(([op, count]) => `${count} ${op}`).join(', '), '', `<details><summary>${changes.length} step(s)</summary>`, '', '| Op | Type | URN |', '| --- | --- | --- |');
+    for (const change of changes.slice(0, MAX_ROWS)) {
+        lines.push(`| ${change.op} | \`${change.type}\` | \`${change.urn}\` |`);
+    }
+    if (changes.length > MAX_ROWS) {
+        lines.push('', `_and ${changes.length - MAX_ROWS} more; see the log._`);
+    }
+    lines.push('', '</details>');
+    return lines.join('\n');
+}
+function renderErrorLogSummary(entries) {
+    if (entries.length === 0) {
+        return undefined;
+    }
+    const lines = ['### Errors', ''];
+    for (const entry of entries.slice(0, MAX_ROWS)) {
+        if (entry.kind === 'op-failed') {
+            lines.push(`- ${entry.op} \`${entry.type}\` \`${entry.urn}\` failed`);
+        }
+        else {
+            lines.push(entry.urn
+                ? `- \`${entry.urn}\` — ${firstLine(entry.message)}`
+                : `- ${firstLine(entry.message)}`);
+        }
+    }
+    if (entries.length > MAX_ROWS) {
+        lines.push('', `_and ${entries.length - MAX_ROWS} more; see the log._`);
+    }
+    return lines.join('\n');
+}
+/**
+ * Append the enabled sections to the job summary. Best-effort by contract:
+ * callers on the failure path must not let a summary-write problem mask the
+ * command's real error, so this never throws.
+ */
+async function writeRunSummary(sections) {
+    try {
+        const parts = [];
+        if (sections.changes) {
+            parts.push(renderResourceChangesSummary(JSON.parse(sections.changes.json), sections.changes.command));
+        }
+        if (sections.errorLog) {
+            const rendered = renderErrorLogSummary(JSON.parse(sections.errorLog.json));
+            if (rendered) {
+                parts.push(rendered);
+            }
+        }
+        if (parts.length === 0) {
+            return;
+        }
+        await summary.addRaw(`${parts.join('\n\n')}\n`).write();
+    }
+    catch (err) {
+        warning(`Failed to write the run summary: ${err}`);
+    }
+}
+
 ;// CONCATENATED MODULE: ./src/libs/summary.ts
 
 
@@ -144128,6 +144224,7 @@ const login = async (workDir, cloudUrl) => {
 
 
 
+
 const main = async () => {
     const downloadConfig = makeInstallationConfig();
     if (downloadConfig.success) {
@@ -144188,12 +144285,15 @@ const runAction = async (config) => {
         await stack.setAllConfig(config.configMap);
     }
     startGroup(`pulumi ${config.command} on ${config.stackName}`);
-    // Collects {op, urn, type} per changed resource for the opt-in
-    // resource-changes output, and the engine's error records for the opt-in
+    // Collects {op, urn, type} per resource step for the opt-in
+    // resource-changes output (changed steps only, or every step including
+    // same/read with 'all'), and the engine's error records for the opt-in
     // error-log output. Only wired up when a flag is on, so default runs skip
     // the Automation API's event-log plumbing entirely.
-    const changeCollector = config.resourceChanges
-        ? createChangeCollector()
+    const changeCollector = config.resourceChanges !== 'false'
+        ? createChangeCollector({
+            includeUnchanged: config.resourceChanges === 'all',
+        })
         : undefined;
     const errorLogCollector = config.errorLog
         ? createErrorLogCollector()
@@ -144245,6 +144345,18 @@ const runAction = async (config) => {
         }
         if (errorLogCollector) {
             setOutput('error-log', errorLogCollector.toJson());
+        }
+        // Render what was collected into the job summary too — never throws, so
+        // it cannot mask the command's real error being rethrown below.
+        if (config.command !== 'output') {
+            await writeRunSummary({
+                changes: changeCollector
+                    ? { json: changeCollector.toJson(), command: config.command }
+                    : undefined,
+                errorLog: errorLogCollector
+                    ? { json: errorLogCollector.toJson() }
+                    : undefined,
+            });
         }
         throw err;
     }
@@ -144311,6 +144423,19 @@ const runAction = async (config) => {
         // Usually empty on success; non-empty when pulumi's --continue-on-error
         // let the command succeed past failed steps.
         setOutput('error-log', errorLogCollector.toJson());
+    }
+    // Render the collected data into the job summary. Skipped entirely for
+    // command: output, which performs no engine operation — an always-empty
+    // "No resource changes." section would be noise.
+    if (config.command !== 'output') {
+        await writeRunSummary({
+            changes: changeCollector
+                ? { json: changeCollector.toJson(), command: config.command }
+                : undefined,
+            errorLog: errorLogCollector
+                ? { json: errorLogCollector.toJson() }
+                : undefined,
+        });
     }
     // Only comment on the pull request if the command is not `output`.
     if (config.command !== "output") {

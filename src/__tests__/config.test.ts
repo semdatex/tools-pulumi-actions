@@ -88,7 +88,7 @@ describe('config.ts', () => {
         "outputFormat": "per-key",
         "pulumiVersion": "^3",
         "remove": false,
-        "resourceChanges": false,
+        "resourceChanges": "false",
         "secretMasking": "nested",
         "secretsProvider": "",
         "stackName": "dev",
@@ -106,6 +106,26 @@ describe('config.ts', () => {
 
     expect(() => makeConfig()).toThrowErrorMatchingInlineSnapshot(
       `"Input was not correct for command. Valid alternatives are: up, update, refresh, destroy, preview, output"`,
+    );
+  });
+
+  it('should parse resource-changes all', async () => {
+    setupMockedConfig({
+      ...defaultConfig,
+      'resource-changes': 'all',
+    });
+
+    expect(makeConfig().resourceChanges).toBe('all');
+  });
+
+  it('should fail if resource-changes is invalid', async () => {
+    setupMockedConfig({
+      ...defaultConfig,
+      'resource-changes': 'bogus',
+    });
+
+    expect(() => makeConfig()).toThrowErrorMatchingInlineSnapshot(
+      `"Input was not correct for resource-changes. Valid alternatives are: true, false, all"`,
     );
   });
 

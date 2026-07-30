@@ -75,4 +75,26 @@ describe('createChangeCollector', () => {
     } as unknown as EngineEvent);
     expect(collector.toJson()).toEqual('[]');
   });
+
+  it('includes unchanged and read steps when asked for the full account', () => {
+    const collector = createChangeCollector({ includeUnchanged: true });
+    collector.onEvent(preEvent('same', 'urn:pulumi:dev::p::t::a', 't'));
+    collector.onEvent(preEvent('read', 'urn:pulumi:dev::p::t::b', 't'));
+    collector.onEvent(preEvent('delete', 'urn:pulumi:dev::p::t::c', 't'));
+    expect(JSON.parse(collector.toJson())).toEqual([
+      { op: 'same', urn: 'urn:pulumi:dev::p::t::a', type: 't' },
+      { op: 'read', urn: 'urn:pulumi:dev::p::t::b', type: 't' },
+      { op: 'delete', urn: 'urn:pulumi:dev::p::t::c', type: 't' },
+    ]);
+  });
+
+  it('still ignores metadata-less events in full-account mode', () => {
+    const collector = createChangeCollector({ includeUnchanged: true });
+    collector.onEvent({
+      sequence: 0,
+      timestamp: 0,
+      summaryEvent: {},
+    } as unknown as EngineEvent);
+    expect(collector.toJson()).toEqual('[]');
+  });
 });
