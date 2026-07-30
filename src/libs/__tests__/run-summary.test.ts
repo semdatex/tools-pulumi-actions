@@ -56,7 +56,7 @@ describe('renderErrorLogSummary', () => {
     expect(renderErrorLogSummary([])).toBeUndefined();
   });
 
-  it('renders diagnostics with and without a urn, first line only, pipes escaped', () => {
+  it('renders diagnostics with and without a urn, first line only, markdown escaped', () => {
     const entries: ErrorLogEntry[] = [
       {
         kind: 'diagnostic',
@@ -64,6 +64,7 @@ describe('renderErrorLogSummary', () => {
         message: 'cannot be deleted\nbecause it is protected.',
       },
       { kind: 'diagnostic', message: 'a | b\nsecond line' },
+      { kind: 'diagnostic', message: 'path C:\\temp\\x failed' },
     ];
     const rendered = renderErrorLogSummary(entries);
     expect(rendered).toContain('### Errors');
@@ -72,6 +73,9 @@ describe('renderErrorLogSummary', () => {
     );
     expect(rendered).not.toContain('because it is protected');
     expect(rendered).toContain('- a \\| b');
+    // Backslashes are escaped before pipes, so pre-existing ones render
+    // literally instead of combining with the escaping.
+    expect(rendered).toContain('- path C:\\\\temp\\\\x failed');
   });
 
   it('renders failed steps', () => {

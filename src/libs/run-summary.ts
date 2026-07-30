@@ -20,9 +20,11 @@ const MAX_ROWS = 100;
 
 function firstLine(message: string): string {
   const line = message.split('\n', 1)[0].trim();
-  // Keep table cells intact: the message is arbitrary text, the pipe is the
-  // one character that would break out of the cell.
-  return line.replace(/\|/g, '\\|');
+  // The message is arbitrary text landing in markdown: escape backslashes
+  // first (so existing ones can't combine with the escapes added next, and
+  // render literally), then pipes (so a message can't break out of a cell
+  // if a consumer ever renders these lines inside a table).
+  return line.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
 }
 
 export function renderResourceChangesSummary(
