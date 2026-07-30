@@ -100,6 +100,7 @@ export function makeConfig() {
         alternatives: ['per-key', 'json', 'json-with-secrets'] as const,
       }) ?? 'per-key',
     resourceChanges: getBooleanInput('resource-changes'),
+    errorLog: getBooleanInput('error-log'),
 
     options: {
       parallel: getNumberInput('parallel', {}),

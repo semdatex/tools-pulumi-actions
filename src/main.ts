@@ -2,6 +2,7 @@ import { resolve } from 'path';
 import * as core from '@actions/core';
 import { context } from '@actions/github';
 import {
+  EngineEvent,
   LocalProgramArgs,
   LocalWorkspace,
   LocalWorkspaceOptions,
@@ -18,6 +19,7 @@ import {
 } from './config';
 import { createChangeCollector } from './libs/changes';
 import { environmentVariables } from './libs/envs';
+import { createErrorLogCollector } from './libs/error-log';
 import {
   buildStackOutputsJson,
   fetchOutputsWithoutDecrypting,
@@ -107,12 +109,23 @@ const runAction = async (config: Config): Promise<void> => {
   core.startGroup(`pulumi ${config.command} on ${config.stackName}`);
 
   // Collects {op, urn, type} per changed resource for the opt-in
-  // resource-changes output. Only wired up when the flag is on, so default
-  // runs skip the Automation API's event-log plumbing entirely.
+  // resource-changes output, and the engine's error records for the opt-in
+  // error-log output. Only wired up when a flag is on, so default runs skip
+  // the Automation API's event-log plumbing entirely.
   const changeCollector = config.resourceChanges
     ? createChangeCollector()
     : undefined;
-  const onEvent = changeCollector?.onEvent;
+  const errorLogCollector = config.errorLog
+    ? createErrorLogCollector()
+    : undefined;
+  const collectors = [changeCollector, errorLogCollector].filter(
+    (collector) => collector !== undefined,
+  );
+  const onEvent =
+    collectors.length > 0
+      ? (event: EngineEvent) =>
+          collectors.forEach((collector) => collector.onEvent(event))
+      : undefined;
 
   const actions: Record<Commands, () => Promise<[string, string]>> = {
     up: () =>
@@ -149,14 +162,18 @@ const runAction = async (config: Config): Promise<void> => {
     [stdout, stderr] = await actions[config.command]();
   } catch (err) {
     // Failure keeps upstream semantics (the rethrow lands in the top-level
-    // handler: setFailed, no stack outputs, no PR comment) — but an opted-in
-    // resource-changes output is still published, best-effort from the
-    // events received before the error, so a step carrying the GitHub
-    // Actions step property `continue-on-error: true` (unrelated to this
-    // action's same-named input, which is pulumi's --continue-on-error) can
-    // see what the command changed or planned to change before it failed.
+    // handler: setFailed, no stack outputs, no PR comment) — but opted-in
+    // resource-changes and error-log outputs are still published, best-effort
+    // from the events received before the error, so a step carrying the
+    // GitHub Actions step property `continue-on-error: true` (unrelated to
+    // this action's same-named input, which is pulumi's --continue-on-error)
+    // can see what the command changed or planned to change — and what the
+    // engine reported as failing, for its own interpretation.
     if (changeCollector) {
       core.setOutput('resource-changes', changeCollector.toJson());
+    }
+    if (errorLogCollector) {
+      core.setOutput('error-log', errorLogCollector.toJson());
     }
     throw err;
   }
@@ -195,6 +212,14 @@ const runAction = async (config: Config): Promise<void> => {
         "The stack output 'resource-changes' collides with the action's resource-changes output in per-key format. Rename the stack output or use output-format: json.",
       );
     }
+    if (
+      errorLogCollector &&
+      Object.prototype.hasOwnProperty.call(outputs, 'error-log')
+    ) {
+      throw new Error(
+        "The stack output 'error-log' collides with the action's error-log output in per-key format. Rename the stack output or use output-format: json.",
+      );
+    }
     publishStackOutputs(outputs, {
       secretMasking: config.secretMasking,
     });
@@ -222,6 +247,11 @@ const runAction = async (config: Config): Promise<void> => {
   if (changeCollector) {
     // Empty for command: output, which performs no engine operation.
     core.setOutput('resource-changes', changeCollector.toJson());
+  }
+  if (errorLogCollector) {
+    // Usually empty on success; non-empty when pulumi's --continue-on-error
+    // let the command succeed past failed steps.
+    core.setOutput('error-log', errorLogCollector.toJson());
   }
 
   // Only comment on the pull request if the command is not `output`.

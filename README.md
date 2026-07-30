@@ -179,6 +179,20 @@ The action can be configured with the following arguments:
   an output named `resource-changes`, instead of silently shadowing one of
   the two.
 
+- `error-log` - (optional) If `true`, publish the `error-log` output: a JSON
+  array of the error records the command produced, exactly as the engine
+  reported them — error diagnostics as `{kind: "diagnostic", urn?, message}`
+  (`urn` only when the engine provided it structurally) and failed steps as
+  `{kind: "op-failed", op, urn, type}`, in event order. The action does
+  **not** interpret messages: the engine attaches no structured cause to a
+  diagnostic, so any classification would be a wording-dependent heuristic
+  baked into the action. Interpretation — recognizing protection refusals,
+  dropping the engine's bare closing summary (`preview failed` /
+  `update failed`, no URN), which is included — is the consumer's job on
+  `message`. Works with any `output-format`; with `per-key` the action
+  fails if the stack itself has an output named `error-log`. See
+  [Interpreting the error log](#interpreting-the-error-log).
+
 - `plan` - (optional) Used for
   [update plans](https://www.pulumi.com/docs/concepts/update-plans/)
 
@@ -274,6 +288,52 @@ That step property is unrelated to this action's `continue-on-error`
 *input*, which is passed through as `pulumi up --continue-on-error` and
 makes Pulumi carry on updating the remaining resources after one of them
 fails:
+
+### Interpreting the error log
+
+A dry-run of a change that removes `protect: true` resources from a stack
+(for example ahead of a state migration) fails by design: the engine refuses
+each protected delete. With `error-log: true` such a step gets the engine's
+error records as data, and the *consumer* decides what counts as a
+protection refusal — the action ships no classification, because the engine
+provides none:
+
+```yaml
+- uses: semdatex/tools-pulumi-actions@<sha>
+  id: preview
+  continue-on-error: true # step property: keep the job running past the red step
+  with:
+    command: preview
+    stack-name: org/project/stack
+    error-log: true
+    resource-changes: true
+
+- name: Fail unless every error is a protection refusal
+  if: steps.preview.outcome == 'failure'
+  run: |
+    # 1. Drop the engine's bare closing summary ("preview failed", no urn) —
+    #    it restates the failure without naming a cause.
+    causes=$(jq '[.[] | select((.message // "") | test("^(preview|update|refresh|destroy) failed\\s*$") | not)]' <<<"$ERROR_LOG")
+    # 2. Our definition of a protection refusal: a protection word AND a
+    #    deletion verb in the message (tolerates wording drift across Pulumi
+    #    versions). Yours to tighten or replace.
+    jq -e 'length > 0 and all((.message // "") | test("protect"; "i") and test("delet"; "i"))' <<<"$causes" >/dev/null || {
+      echo "::error::preview failed for reasons beyond protected deletes"
+      jq -r '.[] | "::error::\(.urn // "<no urn>"): \(.message // .op)"' <<<"$causes"
+      exit 1
+    }
+    echo "Preview is red only because protected resources are leaving the stack:"
+    jq -r '.[] | "  \(.urn // .message)"' <<<"$causes"
+  env:
+    ERROR_LOG: ${{ steps.preview.outputs['error-log'] }}
+```
+
+`length > 0` is load-bearing: some failures emit no engine event at all
+(`--expect-no-changes` fails via CLI stderr only), so an empty log on a
+failed command means the cause was not captured — never conclude
+"protection-only" from it. And because the check is `all(...)` over the
+remaining entries, anything the consumer's pattern does not positively
+recognize blocks it — unknown error shapes surface rather than pass.
 
 ```yaml
 jobs:
