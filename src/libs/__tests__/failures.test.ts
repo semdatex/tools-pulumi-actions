@@ -28,94 +28,58 @@ function opFailedEvent(op: string, urn: string, type: string): EngineEvent {
 const guardedUrn = 'urn:pulumi:dev::proj::pulumi-nodejs:dynamic:Resource::guarded';
 
 describe('createFailureCollector', () => {
-  it('classifies a protection refusal with a structured urn', () => {
+  it('records an error diagnostic verbatim with its structured urn', () => {
     const collector = createFailureCollector();
-    // Shape observed from a real engine run: the refusal diagnostic carries
-    // the urn both structured and inside the message.
-    collector.onEvent(
-      diagEvent(
-        'error',
-        `Preview failed: resource "${guardedUrn}" cannot be deleted\nbecause it is protected. To unprotect the resource, either remove the protect flag from the resource in your Pulumi program and run \`pulumi up\`, or use the command:\n\`pulumi state unprotect '${guardedUrn}'\``,
-        guardedUrn,
-      ),
-    );
-    const failures = JSON.parse(collector.toJson());
-    expect(failures).toHaveLength(1);
-    expect(failures[0].urn).toBe(guardedUrn);
-    expect(failures[0].protected).toBe(true);
-  });
-
-  it('derives the urn from the message when not structured', () => {
-    const collector = createFailureCollector();
-    collector.onEvent(
-      diagEvent(
-        'error',
-        `error: resource "${guardedUrn}" is protected and can't be deleted`,
-      ),
-    );
-    const failures = JSON.parse(collector.toJson());
-    expect(failures).toEqual([
-      {
-        urn: guardedUrn,
-        message: `error: resource "${guardedUrn}" is protected and can't be deleted`,
-        protected: true,
-      },
+    // Shape observed from a real engine run: a protection refusal carrying
+    // the urn both structured and inside the message. The collector must
+    // transport it, not interpret it.
+    const message = `Preview failed: resource "${guardedUrn}" cannot be deleted\nbecause it is protected.`;
+    collector.onEvent(diagEvent('error', message, guardedUrn));
+    expect(JSON.parse(collector.toJson())).toEqual([
+      { kind: 'diagnostic', urn: guardedUrn, message },
     ]);
   });
 
-  it('keeps unrelated error diagnostics as non-protection failures', () => {
+  it('does not parse a urn out of the message text', () => {
     const collector = createFailureCollector();
-    collector.onEvent(
-      diagEvent(
-        'error',
-        'error: failed to fetch bucket: timeout',
-        'urn:pulumi:dev::proj::aws:s3/bucket:Bucket::b',
-      ),
-    );
+    const message = `error: resource "${guardedUrn}" is protected and can't be deleted`;
+    collector.onEvent(diagEvent('error', message));
     const failures = JSON.parse(collector.toJson());
-    expect(failures).toHaveLength(1);
-    expect(failures[0].protected).toBe(false);
-  });
-
-  it('keeps urn-less program errors as non-protection failures', () => {
-    const collector = createFailureCollector();
-    // Shape observed from a real engine run of a throwing program.
-    collector.onEvent(
-      diagEvent(
-        'error',
-        "Running program '/work/index.js' failed with an unhandled exception:\nError: kaboom from program",
-      ),
-    );
-    const failures = JSON.parse(collector.toJson());
-    expect(failures).toHaveLength(1);
+    expect(failures).toEqual([{ kind: 'diagnostic', message }]);
     expect(failures[0].urn).toBeUndefined();
-    expect(failures[0].protected).toBe(false);
   });
 
-  it('suppresses the bare command trailer the engine emits on every failure', () => {
+  it('keeps urn-less diagnostics, including the engine closing summary', () => {
     const collector = createFailureCollector();
-    // Shapes observed from real engine runs: a final urn-less summary
-    // diagnostic restating that the command failed.
+    // Shapes observed from real engine runs: the bare trailer restating that
+    // the command failed. Filtering it would be message interpretation, which
+    // is the consumer's job — the collector keeps it.
     collector.onEvent(diagEvent('error', 'preview failed\n'));
-    collector.onEvent(diagEvent('error', 'update failed\n'));
-    expect(collector.toJson()).toEqual('[]');
-  });
-
-  it('keeps a trailer-looking diagnostic when it carries a urn', () => {
-    const collector = createFailureCollector();
-    collector.onEvent(diagEvent('error', 'preview failed\n', guardedUrn));
-    expect(JSON.parse(collector.toJson())).toHaveLength(1);
+    collector.onEvent(
+      diagEvent(
+        'error',
+        "Running program '/work/index.js' failed with an unhandled exception:\nError: kaboom",
+      ),
+    );
+    expect(JSON.parse(collector.toJson())).toEqual([
+      { kind: 'diagnostic', message: 'preview failed\n' },
+      {
+        kind: 'diagnostic',
+        message:
+          "Running program '/work/index.js' failed with an unhandled exception:\nError: kaboom",
+      },
+    ]);
   });
 
   it('ignores non-error severities', () => {
     const collector = createFailureCollector();
     collector.onEvent(diagEvent('info', 'hello'));
     collector.onEvent(diagEvent('info#err', 'stderr chatter'));
-    collector.onEvent(diagEvent('warning', 'something protected got deleted'));
+    collector.onEvent(diagEvent('warning', 'something worrying'));
     expect(collector.toJson()).toEqual('[]');
   });
 
-  it('records failed steps as non-protection failures', () => {
+  it('records failed steps with their runtime metadata', () => {
     const collector = createFailureCollector();
     collector.onEvent(
       opFailedEvent(
@@ -126,10 +90,10 @@ describe('createFailureCollector', () => {
     );
     expect(JSON.parse(collector.toJson())).toEqual([
       {
+        kind: 'op-failed',
         op: 'create',
         urn: 'urn:pulumi:dev::proj::aws:s3/bucket:Bucket::b',
         type: 'aws:s3/bucket:Bucket',
-        protected: false,
       },
     ]);
   });
@@ -139,14 +103,10 @@ describe('createFailureCollector', () => {
     collector.onEvent(
       opFailedEvent('update', 'urn:pulumi:dev::proj::t::x', 't'),
     );
-    collector.onEvent(
-      diagEvent('error', `${guardedUrn} cannot be deleted because it is protected.`),
-    );
-    const failures = JSON.parse(collector.toJson());
-    expect(failures.map((f: { protected: boolean }) => f.protected)).toEqual([
-      false,
-      true,
-    ]);
+    collector.onEvent(diagEvent('error', 'boom', guardedUrn));
+    expect(
+      JSON.parse(collector.toJson()).map((f: { kind: string }) => f.kind),
+    ).toEqual(['op-failed', 'diagnostic']);
   });
 
   it('truncates oversized messages', () => {

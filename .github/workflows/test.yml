@@ -372,11 +372,16 @@ jobs:
           failures: true
           resource-changes: true
           suppress-progress: true
-      - name: Assert every failure is a protection refusal, cross-referenced with the planned delete
+      - name: Assert the refusal arrives uninterpreted and the consumer-side check works
+        # The action ships the failures as data; classification is the
+        # consumer's job. This assertion IS the documented consumer pattern:
+        # drop the engine's closing summary, then pattern-match the causes.
         run: |
           [[ "$OUTCOME" == "failure" ]] || { echo "expected the preview step to fail, got $OUTCOME"; exit 1; }
-          jq -e 'length > 0 and all(.protected)' <<<"$FAILURES" >/dev/null || { echo "expected only protection refusals, got: '$FAILURES'"; exit 1; }
-          jq -e 'any(.[]; .urn | endswith("::guarded"))' <<<"$FAILURES" >/dev/null || { echo "the refusal must name the protected resource, got: '$FAILURES'"; exit 1; }
+          jq -e 'all(.kind == "diagnostic" or .kind == "op-failed")' <<<"$FAILURES" >/dev/null || { echo "every entry must carry its engine event kind, got: '$FAILURES'"; exit 1; }
+          causes=$(jq '[.[] | select((.message // "") | test("^(preview|update|refresh|destroy) failed\\s*$") | not)]' <<<"$FAILURES")
+          jq -e 'length > 0 and all((.message // "") | test("protect"; "i") and test("delet"; "i"))' <<<"$causes" >/dev/null || { echo "expected only protection refusals after dropping the summary, got: '$causes'"; exit 1; }
+          jq -e 'any(.[]; .urn // "" | endswith("::guarded"))' <<<"$causes" >/dev/null || { echo "the refusal must carry the structured urn of the protected resource, got: '$causes'"; exit 1; }
           jq -e 'any(.[]; .op == "delete" and (.urn | endswith("::guarded")))' <<<"$RESOURCE_CHANGES" >/dev/null || { echo "resource-changes must carry the planned delete, got: '$RESOURCE_CHANGES'"; exit 1; }
         env:
           OUTCOME: ${{ steps.protectedpreview.outcome }}
@@ -398,11 +403,12 @@ jobs:
           output-format: json
           failures: true
           suppress-progress: true
-      - name: Assert the genuine error is captured and blocks the protection-only check
+      - name: Assert the genuine error is captured and blocks the consumer-side check
         run: |
           [[ "$OUTCOME" == "failure" ]] || { echo "expected the preview step to fail, got $OUTCOME"; exit 1; }
-          jq -e 'length > 0' <<<"$FAILURES" >/dev/null || { echo "the program error must be captured, got: '$FAILURES'"; exit 1; }
-          jq -e 'all(.protected) | not' <<<"$FAILURES" >/dev/null || { echo "a program error must not classify as protection, got: '$FAILURES'"; exit 1; }
+          causes=$(jq '[.[] | select((.message // "") | test("^(preview|update|refresh|destroy) failed\\s*$") | not)]' <<<"$FAILURES")
+          jq -e 'length > 0' <<<"$causes" >/dev/null || { echo "the program error must be captured, got: '$FAILURES'"; exit 1; }
+          jq -e 'all((.message // "") | test("protect"; "i") and test("delet"; "i")) | not' <<<"$causes" >/dev/null || { echo "a program error must not pass the protection pattern, got: '$causes'"; exit 1; }
         env:
           OUTCOME: ${{ steps.brokenpreview.outcome }}
           FAILURES: ${{ steps.brokenpreview.outputs.failures }}

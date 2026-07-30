@@ -130,7 +130,7 @@ inputs:
     required: false
     default: 'false'
   failures:
-    description: 'If true, publish the failures output: a JSON array of the failures the command hit — error diagnostics as {urn?, message, protected} and failed steps as {op, urn, type, protected} — where protected is true for a protection refusal (a protect: true resource the command would delete). Works with any output-format; with per-key the action fails if the stack itself has an output named failures. When the action fails the output is still set, best-effort, from the events received before the error, so a dry-run step with the GitHub Actions step property continue-on-error: true can check whether it is red only because protected resources are leaving the stack: jq -e ''length > 0 and all(.protected)''. An empty array on a failed command means the cause was not visible in engine events (e.g. --expect-no-changes fails via CLI stderr only) and must not be treated as protection-only.'
+    description: 'If true, publish the failures output: a JSON array of the failures the command hit, exactly as the engine reported them — error diagnostics as {kind: diagnostic, urn?, message} (urn only when the engine provided it structurally) and failed steps as {kind: op-failed, op, urn, type}. The action does not interpret messages: the engine attaches no structured cause, so classification (e.g. recognizing protection refusals, or the engine''s bare closing "preview failed" summary, which is included) is the consumer''s job. Works with any output-format; with per-key the action fails if the stack itself has an output named failures. When the action fails the output is still set, best-effort, from the events received before the error, so a dry-run step with the GitHub Actions step property continue-on-error: true can post-process an expected failure. An empty array on a failed command means the cause was not visible in engine events (e.g. --expect-no-changes fails via CLI stderr only).'
     required: false
     default: 'false'
   always-include-summary:
@@ -160,7 +160,7 @@ outputs:
   resource-changes:
     description: 'JSON array [{op, urn, type}] of the resources the command changed (up/refresh/destroy) or planned to change (preview), excluding unchanged (same) and read steps. Only set when the resource-changes input is true — then set even when the action fails, best-effort, from the events received before the error.'
   failures:
-    description: 'JSON array of the failures the command hit, each entry classified with protected: true when it is a protection refusal. Only set when the failures input is true — then set even when the action fails, best-effort, from the events received before the error. Empty on success and when the failure cause was not visible in engine events.'
+    description: 'JSON array of the failures the command hit, exactly as the engine reported them: {kind: diagnostic, urn?, message} and {kind: op-failed, op, urn, type} entries in event order, uninterpreted. Only set when the failures input is true — then set even when the action fails, best-effort, from the events received before the error. Empty on success and when the failure cause was not visible in engine events.'
 runs:
   using: 'node24'
   main: 'dist/index.js'

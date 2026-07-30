@@ -180,15 +180,17 @@ The action can be configured with the following arguments:
   the two.
 
 - `failures` - (optional) If `true`, publish the `failures` output: a JSON
-  array of the failures the command hit — error diagnostics as
-  `{urn?, message, protected}` and failed steps as
-  `{op, urn, type, protected}` — where `protected: true` marks a protection
-  refusal (a `protect: true` resource the command would delete). The
-  engine's bare closing trailer (`preview failed` / `update failed`, no URN)
-  is suppressed; every cause-bearing diagnostic is kept, classified
-  fail-closed (`protected: false` when in doubt). Works with any
-  `output-format`; with `per-key` the action fails if the stack itself has
-  an output named `failures`. See
+  array of the failures the command hit, exactly as the engine reported
+  them — error diagnostics as `{kind: "diagnostic", urn?, message}` (`urn`
+  only when the engine provided it structurally) and failed steps as
+  `{kind: "op-failed", op, urn, type}`, in event order. The action does
+  **not** interpret messages: the engine attaches no structured cause to a
+  diagnostic, so any classification would be a wording-dependent heuristic
+  baked into the action. Interpretation — recognizing protection refusals,
+  dropping the engine's bare closing summary (`preview failed` /
+  `update failed`, no URN), which is included — is the consumer's job on
+  `message`. Works with any `output-format`; with `per-key` the action
+  fails if the stack itself has an output named `failures`. See
   [Detecting protection-only failures](#detecting-protection-only-failures).
 
 - `plan` - (optional) Used for
@@ -291,8 +293,9 @@ fails:
 
 A dry-run of a change that removes `protect: true` resources from a stack
 (for example ahead of a state migration) fails by design: the engine refuses
-each protected delete. With `failures: true` such a step can distinguish
-"red only because of protections" from a genuine error, structurally:
+each protected delete. With `failures: true` such a step gets the failures
+as data, and the *consumer* decides what counts as a protection refusal —
+the action ships no classification, because the engine provides none:
 
 ```yaml
 - uses: semdatex/tools-pulumi-actions@<sha>
@@ -307,13 +310,19 @@ each protected delete. With `failures: true` such a step can distinguish
 - name: Fail unless every failure is a protection refusal
   if: steps.preview.outcome == 'failure'
   run: |
-    jq -e 'length > 0 and all(.protected)' <<<"$FAILURES" >/dev/null || {
+    # 1. Drop the engine's bare closing summary ("preview failed", no urn) —
+    #    it restates the failure without naming a cause.
+    causes=$(jq '[.[] | select((.message // "") | test("^(preview|update|refresh|destroy) failed\\s*$") | not)]' <<<"$FAILURES")
+    # 2. Our definition of a protection refusal: a protection word AND a
+    #    deletion verb in the message (tolerates wording drift across Pulumi
+    #    versions). Yours to tighten or replace.
+    jq -e 'length > 0 and all((.message // "") | test("protect"; "i") and test("delet"; "i"))' <<<"$causes" >/dev/null || {
       echo "::error::preview failed for reasons beyond protected deletes"
-      jq -r '.[] | select(.protected | not) | "::error::\(.urn // "<no urn>"): \(.message // .op)"' <<<"$FAILURES"
+      jq -r '.[] | "::error::\(.urn // "<no urn>"): \(.message // .op)"' <<<"$causes"
       exit 1
     }
     echo "Preview is red only because protected resources are leaving the stack:"
-    jq -r '.[] | "  \(.urn)"' <<<"$FAILURES"
+    jq -r '.[] | "  \(.urn // .message)"' <<<"$causes"
   env:
     FAILURES: ${{ steps.preview.outputs.failures }}
 ```
@@ -321,9 +330,9 @@ each protected delete. With `failures: true` such a step can distinguish
 `length > 0` is load-bearing: some failures emit no engine event at all
 (`--expect-no-changes` fails via CLI stderr only), so an empty array on a
 failed command means the cause was not captured — never conclude
-"protection-only" from it. Entries are classified fail-closed: anything not
-positively recognized as a protection refusal keeps `protected: false` and
-blocks the check.
+"protection-only" from it. And because the check is `all(...)` over the
+remaining entries, anything the consumer's pattern does not positively
+recognize blocks it — unknown failure shapes surface rather than pass.
 
 ```yaml
 jobs:

@@ -167,8 +167,8 @@ const runAction = async (config: Config): Promise<void> => {
     // from the events received before the error, so a step carrying the
     // GitHub Actions step property `continue-on-error: true` (unrelated to
     // this action's same-named input, which is pulumi's --continue-on-error)
-    // can see what the command changed or planned to change — and whether it
-    // failed for any reason other than protection refusals.
+    // can see what the command changed or planned to change — and what the
+    // engine reported as failing, for its own interpretation.
     if (changeCollector) {
       core.setOutput('resource-changes', changeCollector.toJson());
     }
