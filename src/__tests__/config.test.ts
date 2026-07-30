@@ -29,7 +29,7 @@ const defaultConfig: Record<string, string> = {
   debug: 'false',
   'secret-masking': 'nested',
   'output-format': 'per-key',
-  'resource-changes': 'false',
+  'resource-changes': '',
   'error-log': 'false',
 };
 
@@ -88,7 +88,7 @@ describe('config.ts', () => {
         "outputFormat": "per-key",
         "pulumiVersion": "^3",
         "remove": false,
-        "resourceChanges": false,
+        "resourceChanges": undefined,
         "secretMasking": "nested",
         "secretsProvider": "",
         "stackName": "dev",
@@ -106,6 +106,30 @@ describe('config.ts', () => {
 
     expect(() => makeConfig()).toThrowErrorMatchingInlineSnapshot(
       `"Input was not correct for command. Valid alternatives are: up, update, refresh, destroy, preview, output"`,
+    );
+  });
+
+  it('should parse the resource-changes modes', async () => {
+    setupMockedConfig({ ...defaultConfig, 'resource-changes': 'all' });
+    expect(makeConfig().resourceChanges).toBe('all');
+
+    setupMockedConfig({ ...defaultConfig, 'resource-changes': 'changed' });
+    expect(makeConfig().resourceChanges).toBe('changed');
+  });
+
+  it('should leave resource-changes undefined when omitted', async () => {
+    setupMockedConfig({ ...defaultConfig, 'resource-changes': '' });
+    expect(makeConfig().resourceChanges).toBeUndefined();
+  });
+
+  it('should fail if resource-changes is invalid', async () => {
+    setupMockedConfig({
+      ...defaultConfig,
+      'resource-changes': 'bogus',
+    });
+
+    expect(() => makeConfig()).toThrowErrorMatchingInlineSnapshot(
+      `"Input was not correct for resource-changes. Valid alternatives are: changed, all"`,
     );
   });
 

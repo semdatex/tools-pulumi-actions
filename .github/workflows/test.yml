@@ -166,7 +166,7 @@ jobs:
         run: |
           [[ -z "$PER_KEY_PLAIN" ]] || { echo "per-key outputs must not be set in json mode"; exit 1; }
           [[ -z "$PER_KEY_SECRET" ]] || { echo "per-key secret output must not be set in json mode"; exit 1; }
-          [[ -z "$RESOURCE_CHANGES" ]] || { echo "resource-changes must not be set without the resource-changes flag: '$RESOURCE_CHANGES'"; exit 1; }
+          [[ -z "$RESOURCE_CHANGES" ]] || { echo "resource-changes must not be set when the resource-changes input is omitted: '$RESOURCE_CHANGES'"; exit 1; }
           jq -e '.plain.value == "hello" and .plain.secret == false' <<<"$AGGREGATE" >/dev/null || { echo "plain entry wrong"; exit 1; }
           jq -e '.secretValue.secret == true and (.secretValue | has("value") | not)' <<<"$AGGREGATE" >/dev/null || { echo "secret entry not excluded"; exit 1; }
           jq -e '.structuredSecret.secret == true and (.structuredSecret | has("value") | not)' <<<"$AGGREGATE" >/dev/null || { echo "structured secret entry not excluded"; exit 1; }
@@ -231,7 +231,7 @@ jobs:
           work-dir: .github/test-stacks/yaml
           expect-no-changes: true
           output-format: json
-          resource-changes: true
+          resource-changes: changed
           suppress-progress: true
       - name: Assert the failed preview still reported the planned changes
         run: |
@@ -251,7 +251,7 @@ jobs:
           stack-name: dev
           work-dir: .github/test-stacks/yaml
           output-format: json
-          resource-changes: true
+          resource-changes: changed
           suppress-progress: true
       - name: Run Pulumi Up again (per-key + resource-changes, no pending changes)
         uses: ./
@@ -263,7 +263,7 @@ jobs:
           cloud-url: file://~
           stack-name: dev
           work-dir: .github/test-stacks/yaml
-          resource-changes: true
+          resource-changes: changed
           suppress-progress: true
       - name: Assert changes are reported on the first up and empty on the no-op per-key up
         run: |
@@ -275,6 +275,25 @@ jobs:
           CHANGES_UP: ${{ steps.up.outputs.resource-changes }}
           CHANGES_NOOP: ${{ steps.upnoop.outputs.resource-changes }}
           PLAIN_NOOP: ${{ steps.upnoop.outputs.plain }}
+      - name: Run Pulumi Up once more (resource-changes all, still a no-op)
+        uses: ./
+        id: upall
+        env:
+          PULUMI_CONFIG_PASSPHRASE: not-a-secret
+        with:
+          command: up
+          cloud-url: file://~
+          stack-name: dev
+          work-dir: .github/test-stacks/yaml
+          output-format: json
+          resource-changes: all
+          suppress-progress: true
+      - name: Assert the full account reports the unchanged steps a no-op run has
+        run: |
+          jq -e 'length > 0 and all(.[]; .op == "same")' <<<"$CHANGES_ALL" >/dev/null || { echo "all-mode no-op must report only same steps: '$CHANGES_ALL'"; exit 1; }
+          jq -e 'any(.[]; .urn | contains("pulumi:pulumi:Stack"))' <<<"$CHANGES_ALL" >/dev/null || { echo "all-mode must include the stack resource: '$CHANGES_ALL'"; exit 1; }
+        env:
+          CHANGES_ALL: ${{ steps.upall.outputs.resource-changes }}
       - run: pulumi stack init dev
         working-directory: .github/test-stacks/yaml-collision
         env:
@@ -292,7 +311,7 @@ jobs:
           cloud-url: file://~
           stack-name: dev
           work-dir: .github/test-stacks/yaml-collision
-          resource-changes: true
+          resource-changes: changed
           suppress-progress: true
       - name: Assert the collision failed the action without publishing either output
         run: |
@@ -370,7 +389,7 @@ jobs:
           work-dir: .github/test-stacks/protected
           output-format: json
           error-log: true
-          resource-changes: true
+          resource-changes: changed
           suppress-progress: true
       - name: Assert the refusal arrives uninterpreted and the consumer-side check works
         # The action ships the error records as data; classification is the
