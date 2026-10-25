@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: 'package.json'
           cache: yarn
@@ -294,7 +294,7 @@ jobs:
           name: dist
           path: dist
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: oldstable
 
@@ -387,7 +387,7 @@ jobs:
           name: dist
           path: dist
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.x
           cache: npm
@@ -485,7 +485,7 @@ jobs:
           name: dist
           path: dist
 
-      - uses: actions/setup-python@v6.3.0
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: 3.9
 
@@ -604,7 +604,7 @@ jobs:
           name: dist
           path: dist
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.x
           cache: npm
