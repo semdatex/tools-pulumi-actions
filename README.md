@@ -223,6 +223,10 @@ The action can be configured with the following arguments:
   the GitHub Actions *step property* of the same name, which is what lets a
   job keep running past a failed step.
 
+- `run-program` - (optional) Run the Pulumi program before refreshing or
+  destroying resources. Only valid for refresh, destroy, preview (with
+  `refresh`), and up/update (with `refresh`) commands.
+
 By default, this action will try to authenticate Pulumi with
 [Pulumi Cloud](https://app.pulumi.com/). If you have not specified a
 `PULUMI_ACCESS_TOKEN` then you will need to specify an alternative backend via
